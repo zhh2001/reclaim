@@ -6,11 +6,23 @@ space they take. It can also move them to the trash.
 
 ## Install
 
+Prebuilt binaries for Linux, macOS, and Windows are attached to each
+[GitHub release](https://github.com/zhh2001/cruft/releases) — download the
+archive for your platform and put `cruft` on your PATH.
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+
+```sh
+cargo binstall cruft
+```
+
+From crates.io (builds from source):
+
 ```sh
 cargo install cruft
 ```
 
-Or build from source:
+Or build the checkout yourself:
 
 ```sh
 git clone https://github.com/zhh2001/cruft

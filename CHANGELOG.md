@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Prebuilt binaries for each platform on GitHub Releases, plus cargo-binstall
+  support.
+
 ## [0.3.0] - 2026-06-03
 
 - `--completions <shell>` prints a shell completion script (bash, zsh, fish,

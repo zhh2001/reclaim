@@ -10,6 +10,15 @@ categories = ["command-line-utilities", "filesystem"]
 repository = "https://github.com/zhh2001/cruft"
 homepage = "https://github.com/zhh2001/cruft"
 
+# Matches the archives uploaded by .github/workflows/release.yml so
+# `cargo binstall cruft` can fetch a prebuilt binary.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
