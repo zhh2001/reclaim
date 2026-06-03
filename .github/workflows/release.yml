@@ -1,13 +1,27 @@
 name: release
 
+permissions:
+  contents: read
+
 on:
   push:
     tags:
-      - "v*"
+      - v[0-9]+.*
 
 jobs:
-  upload:
-    name: ${{ matrix.target }}
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          changelog: CHANGELOG.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
+    needs: create-release
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -34,6 +48,8 @@ jobs:
           bin: cruft
           target: ${{ matrix.target }}
           archive: $bin-$target
+          tar: unix
+          zip: windows
           include: README.md,LICENSE-MIT,LICENSE-APACHE
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
