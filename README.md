@@ -1,5 +1,8 @@
 # cruft
 
+[![crates.io](https://img.shields.io/crates/v/cruft.svg)](https://crates.io/crates/cruft)
+[![CI](https://github.com/zhh2001/cruft/actions/workflows/ci.yml/badge.svg)](https://github.com/zhh2001/cruft/actions/workflows/ci.yml)
+
 A command-line tool that finds build and cache directories you can safely delete
 (`node_modules`, Rust `target`, Python caches, and so on) and reports how much
 space they take. It can also move them to the trash.
