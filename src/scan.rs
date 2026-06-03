@@ -17,6 +17,15 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 6] = [
+        Kind::NodeModules,
+        Kind::Target,
+        Kind::Pycache,
+        Kind::Venv,
+        Kind::PytestCache,
+        Kind::MypyCache,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Kind::NodeModules => "node_modules",
@@ -26,6 +35,18 @@ impl Kind {
             Kind::PytestCache => "pytest_cache",
             Kind::MypyCache => "mypy_cache",
         }
+    }
+
+    pub fn from_label(s: &str) -> Option<Kind> {
+        Kind::ALL.into_iter().find(|k| k.label() == s)
+    }
+
+    pub fn labels_joined() -> String {
+        Kind::ALL
+            .iter()
+            .map(|k| k.label())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

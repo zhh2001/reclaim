@@ -1,14 +1,15 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 use serde::Serialize;
 
 use reclaim::delete::{delete_targets, DeleteOpts, TrashRemover};
+use reclaim::filter::{parse_duration, parse_size, Filters};
 use reclaim::format::{human_age, human_size};
-use reclaim::scan::{scan, Found, SizeMode};
+use reclaim::scan::{scan, Found, Kind, SizeMode};
 
 #[derive(Parser)]
 #[command(
@@ -28,6 +29,18 @@ struct Cli {
     /// Measure logical file size instead of on-disk usage
     #[arg(long)]
     apparent: bool,
+
+    /// Keep only entries at least this big (e.g. 500K, 1.5G; plain number is bytes)
+    #[arg(long, value_parser = parse_size)]
+    min_size: Option<u64>,
+
+    /// Keep only entries untouched for at least this long (e.g. 12h, 30d, 2w)
+    #[arg(long, value_parser = parse_duration)]
+    older_than: Option<Duration>,
+
+    /// Keep only these comma-separated types: node_modules, target, __pycache__, venv, pytest_cache, mypy_cache
+    #[arg(long, value_parser = parse_only)]
+    only: Option<KindList>,
 
     /// Move the reclaimable directories to the trash after scanning
     #[arg(long)]
@@ -64,8 +77,27 @@ fn main() -> ExitCode {
     } else {
         SizeMode::Disk
     };
-    let mut found = scan(&cli.path, mode);
+    let filters = Filters {
+        min_size: cli.min_size,
+        older_than: cli.older_than,
+        kinds: cli.only.map(|k| k.0),
+    };
+
+    let mut found = filters.apply(scan(&cli.path, mode), SystemTime::now());
     found.sort_by(|a, b| b.size.cmp(&a.size));
+
+    // Everything below — table, JSON, and the delete set — works off the same
+    // filtered list, so `reclaim --delete <filters>` trashes exactly what's shown.
+    if found.is_empty() {
+        if cli.json {
+            print_json(&found);
+        } else if filters.active() {
+            println!("No matching directories.");
+        } else {
+            println!("Nothing reclaimable found.");
+        }
+        return ExitCode::SUCCESS;
+    }
 
     if cli.delete {
         run_delete(&found, cli.dry_run, cli.yes)
@@ -78,11 +110,15 @@ fn main() -> ExitCode {
     }
 }
 
+#[derive(Clone)]
+struct KindList(Vec<Kind>);
+
+fn parse_only(s: &str) -> Result<KindList, String> {
+    reclaim::filter::parse_kinds(s).map(KindList)
+}
+
 fn run_delete(found: &[Found], dry_run: bool, yes: bool) -> ExitCode {
     print_table(found);
-    if found.is_empty() {
-        return ExitCode::SUCCESS;
-    }
 
     let total: u64 = found.iter().map(|f| f.size).sum();
 
@@ -157,11 +193,6 @@ fn age_string(modified: Option<SystemTime>) -> String {
 }
 
 fn print_table(found: &[Found]) {
-    if found.is_empty() {
-        println!("Nothing reclaimable found.");
-        return;
-    }
-
     let mut rows: Vec<[String; 4]> = Vec::with_capacity(found.len());
     for f in found {
         rows.push([

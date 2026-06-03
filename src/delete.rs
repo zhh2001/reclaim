@@ -194,6 +194,50 @@ mod tests {
     }
 
     #[test]
+    fn filtered_set_is_exactly_what_gets_removed() {
+        use crate::filter::Filters;
+
+        let all = vec![
+            Found {
+                path: PathBuf::from("big1"),
+                rel: PathBuf::from("big1"),
+                kind: Kind::Target,
+                size: 5000,
+                modified: None,
+            },
+            Found {
+                path: PathBuf::from("small"),
+                rel: PathBuf::from("small"),
+                kind: Kind::Pycache,
+                size: 10,
+                modified: None,
+            },
+            Found {
+                path: PathBuf::from("big2"),
+                rel: PathBuf::from("big2"),
+                kind: Kind::NodeModules,
+                size: 2000,
+                modified: None,
+            },
+        ];
+        let filters = Filters {
+            min_size: Some(1000),
+            ..Default::default()
+        };
+        let kept = filters.apply(all, SystemTime::UNIX_EPOCH);
+
+        let r = FakeRemover::new();
+        let out = delete_targets(&kept, opts(false, true), || true, &r);
+
+        assert_eq!(out.moved, 2);
+        // the remover sees the kept set and nothing else
+        assert_eq!(
+            r.calls(),
+            vec![PathBuf::from("big1"), PathBuf::from("big2")]
+        );
+    }
+
+    #[test]
     fn a_failure_does_not_stop_the_rest() {
         let targets = vec![found("a", 100), found("b", 200), found("c", 400)];
         let r = FakeRemover::failing(&["b"]);

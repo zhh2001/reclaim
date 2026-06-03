@@ -16,15 +16,31 @@ are the whole point.
 
 ```
 $ reclaim ~/code
-PATH                       TYPE          SIZE  MODIFIED
-web/node_modules           node_modules  1.2 GiB  3 months ago
+PATH                       TYPE               SIZE  MODIFIED
+web/node_modules           node_modules    1.2 GiB  3 months ago
 svc/target                 target        430.1 MiB  2 days ago
-api/.venv                  venv          88.4 MiB  5 months ago
+api/.venv                  venv           88.4 MiB  5 months ago
 
 Reclaimable total: 1.7 GiB
 ```
 
 Use `--json` for machine-readable output.
+
+## Filtering
+
+Narrow the results (and, with `--delete`, the set that gets removed):
+
+- `--min-size <SIZE>` — keep entries at least this big. Plain number is bytes;
+  `K`/`M`/`G`/`T` suffixes are 1024-based (`500K`, `1.5G`). Uses the current
+  size mode, so it follows `--apparent`.
+- `--older-than <DURATION>` — keep entries untouched for at least this long,
+  based on the newest mtime in the tree. Units are `h`, `d`, `w` (`12h`, `30d`,
+  `2w`); minutes/months aren't accepted to avoid the `m` ambiguity.
+- `--only <TYPES>` — comma-separated, from: `node_modules`, `target`,
+  `__pycache__`, `venv`, `pytest_cache`, `mypy_cache`.
+
+Combining them is an AND: an entry must pass every filter to be kept. If nothing
+matches, reclaim says so and exits without deleting.
 
 ## Deleting
 
