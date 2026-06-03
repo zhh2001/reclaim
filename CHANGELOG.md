@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-06-03
 
 - Optional config file (`$XDG_CONFIG_HOME/cruft/config.toml` or `--config`) for
   custom anchored rules: match a directory name when a sibling file exists, or

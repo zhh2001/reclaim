@@ -13,7 +13,7 @@ cargo install cruft
 Or build from source:
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/zhh2001/cruft
 cd cruft
 cargo build --release
 # binary at target/release/cruft
