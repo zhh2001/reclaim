@@ -39,7 +39,15 @@ pub struct Found {
     pub modified: Option<SystemTime>,
 }
 
-pub fn scan(root: &Path) -> Vec<Found> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizeMode {
+    // on-disk block usage, deduped by inode, like `du`
+    Disk,
+    // logical file bytes, every link counted
+    Apparent,
+}
+
+pub fn scan(root: &Path, mode: SizeMode) -> Vec<Found> {
     let mut out = Vec::new();
     // walkdir doesn't read .gitignore, so node_modules/target get visited; it also
     // doesn't follow symlinks by default, which keeps us from escaping the tree.
@@ -55,12 +63,13 @@ pub fn scan(root: &Path) -> Vec<Found> {
         let path = entry.path();
         if let Some(kind) = classify(path) {
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+            let (size, modified) = measure(path, mode);
             out.push(Found {
                 path: path.to_path_buf(),
                 rel,
                 kind,
-                size: dir_size(path),
-                modified: fs::metadata(path).ok().and_then(|m| m.modified().ok()),
+                size,
+                modified,
             });
             // don't descend: a reclaimable dir is counted whole, and nested
             // matches inside it would only double-count
@@ -89,17 +98,79 @@ fn parent_has(path: &Path, sibling: &str) -> bool {
         .unwrap_or(false)
 }
 
-// jwalk runs this in parallel, which is where the time actually goes on a fat
-// node_modules. len() is the apparent file size, not on-disk block usage.
-fn dir_size(path: &Path) -> u64 {
-    jwalk::WalkDir::new(path)
-        .skip_hidden(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
+// One jwalk pass per candidate gives us both the size and the newest mtime in
+// the subtree. Symlinks are skipped so we don't follow them out of the tree or
+// count a link target's blocks.
+#[cfg(unix)]
+fn measure(path: &Path, mode: SizeMode) -> (u64, Option<SystemTime>) {
+    use std::collections::HashSet;
+    use std::os::unix::fs::MetadataExt;
+
+    let mut total = 0u64;
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    // seed with the candidate dir itself so its own mtime counts
+    let mut newest = fs::symlink_metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    for entry in jwalk::WalkDir::new(path).skip_hidden(false) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.file_type().is_symlink() {
+            continue;
+        }
+        let md = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if let Ok(m) = md.modified() {
+            newest = Some(newest.map_or(m, |cur| cur.max(m)));
+        }
+        if md.is_file() {
+            match mode {
+                SizeMode::Apparent => total += md.len(),
+                SizeMode::Disk => {
+                    // one inode once, so pnpm-style hardlink farms aren't overcounted
+                    if seen.insert((md.dev(), md.ino())) {
+                        total += md.blocks() * 512;
+                    }
+                }
+            }
+        }
+    }
+    (total, newest)
+}
+
+// No block/inode info off Unix, so fall back to apparent bytes regardless of mode.
+#[cfg(not(unix))]
+fn measure(path: &Path, _mode: SizeMode) -> (u64, Option<SystemTime>) {
+    let mut total = 0u64;
+    let mut newest = fs::symlink_metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    for entry in jwalk::WalkDir::new(path).skip_hidden(false) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.file_type().is_symlink() {
+            continue;
+        }
+        let md = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if let Ok(m) = md.modified() {
+            newest = Some(newest.map_or(m, |cur| cur.max(m)));
+        }
+        if md.is_file() {
+            total += md.len();
+        }
+    }
+    (total, newest)
 }
 
 #[cfg(test)]
@@ -133,7 +204,7 @@ mod tests {
         // a node_modules with no package.json sibling: not ours
         touch(&root.join("random/node_modules/stuff.txt"), 100);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Disk);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, Kind::NodeModules);
         assert_eq!(found[0].rel, PathBuf::from("app/node_modules"));
@@ -147,7 +218,7 @@ mod tests {
         touch(&root.join("crate/target/debug/bin"), 500);
         touch(&root.join("notrust/target/whatever"), 500);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Disk);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, Kind::Target);
     }
@@ -161,7 +232,7 @@ mod tests {
         // a plain dir named venv without the marker
         touch(&root.join("venv/notes.txt"), 50);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Disk);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, Kind::Venv);
         assert_eq!(found[0].rel, PathBuf::from(".venv"));
@@ -175,7 +246,7 @@ mod tests {
         touch(&root.join("a/b/.pytest_cache/v/lastfailed"), 30);
         touch(&root.join(".mypy_cache/3.11/x.json"), 30);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Disk);
         assert_eq!(
             kinds(&found),
             vec![Kind::Pycache, Kind::MypyCache, Kind::PytestCache]
@@ -190,7 +261,7 @@ mod tests {
         // a __pycache__ nested inside node_modules must not be reported separately
         touch(&root.join("p/node_modules/dep/__pycache__/x.pyc"), 40);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Disk);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, Kind::NodeModules);
     }
@@ -203,7 +274,7 @@ mod tests {
         touch(&root.join("p/node_modules/a.js"), 100);
         touch(&root.join("p/node_modules/sub/b.js"), 200);
 
-        let found = scan(root);
+        let found = scan(root, SizeMode::Apparent);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].size, 300);
     }
@@ -215,19 +286,77 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("__pycache__");
         touch(&root.join("m.pyc"), 30);
-        assert!(scan(&root).is_empty());
+        assert!(scan(&root, SizeMode::Disk).is_empty());
     }
 
     #[test]
     fn empty_dir_finds_nothing() {
         let dir = tempdir().unwrap();
-        assert!(scan(dir.path()).is_empty());
+        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
     }
 
     #[test]
     fn missing_path_yields_empty() {
         let dir = tempdir().unwrap();
         let gone = dir.path().join("does-not-exist");
-        assert!(scan(&gone).is_empty());
+        assert!(scan(&gone, SizeMode::Disk).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn small_file_rounds_up_to_a_block() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let f = root.join("__pycache__/x.pyc");
+        touch(&f, 1);
+
+        let expect = fs::symlink_metadata(&f).unwrap().blocks() * 512;
+        let found = scan(root, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert!(expect > 1, "a 1-byte file should still use a whole block");
+        assert_eq!(found[0].size, expect);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_counted_once_on_disk_but_each_when_apparent() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let a = root.join("__pycache__/a.bin");
+        touch(&a, 5000);
+        let b = root.join("__pycache__/b.bin");
+        fs::hard_link(&a, &b).unwrap();
+
+        let one_block = fs::symlink_metadata(&a).unwrap().blocks() * 512;
+        let disk = scan(root, SizeMode::Disk);
+        assert_eq!(disk[0].size, one_block); // a and b share the inode
+
+        let apparent = scan(root, SizeMode::Apparent);
+        assert_eq!(apparent[0].size, 10000); // both links counted
+    }
+
+    #[test]
+    fn modified_is_newest_in_subtree() {
+        use filetime::{set_file_mtime, FileTime};
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let nested = root.join("__pycache__/sub/new.pyc");
+        touch(&nested, 10);
+
+        let old = FileTime::from_unix_time(1_000_000_000, 0); // 2001
+        let new = FileTime::from_unix_time(1_700_000_000, 0); // 2023
+                                                              // candidate dir and everything else made old; one nested file made newer
+        set_file_mtime(root.join("__pycache__"), old).unwrap();
+        set_file_mtime(root.join("__pycache__/sub"), old).unwrap();
+        set_file_mtime(&nested, new).unwrap();
+
+        let found = scan(root, SizeMode::Disk);
+        let expect = fs::symlink_metadata(&nested).unwrap().modified().unwrap();
+        assert_eq!(found[0].modified, Some(expect));
     }
 }

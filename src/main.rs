@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use reclaim::delete::{delete_targets, DeleteOpts, TrashRemover};
 use reclaim::format::{human_age, human_size};
-use reclaim::scan::{scan, Found};
+use reclaim::scan::{scan, Found, SizeMode};
 
 #[derive(Parser)]
 #[command(
@@ -24,6 +24,10 @@ struct Cli {
     /// Print results as JSON
     #[arg(long)]
     json: bool,
+
+    /// Measure logical file size instead of on-disk usage
+    #[arg(long)]
+    apparent: bool,
 
     /// Move the reclaimable directories to the trash after scanning
     #[arg(long)]
@@ -55,7 +59,12 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut found = scan(&cli.path);
+    let mode = if cli.apparent {
+        SizeMode::Apparent
+    } else {
+        SizeMode::Disk
+    };
+    let mut found = scan(&cli.path, mode);
     found.sort_by(|a, b| b.size.cmp(&a.size));
 
     if cli.delete {

@@ -55,7 +55,10 @@ with `--json`.
 Once a directory matches it isn't scanned further, so a match nested inside
 another match is counted once, as part of the outer one.
 
-Sizes are the sum of file lengths (apparent size), not on-disk block usage.
+SIZE is on-disk usage (block allocation, hard links counted once), matching
+`du`. Pass `--apparent` to sum logical file sizes instead, counting every hard
+link. Off Unix only the apparent figure is available. MODIFIED is the newest
+mtime found anywhere in the directory, not the directory's own timestamp.
 
 ## Build
 
