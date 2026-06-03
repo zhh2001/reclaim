@@ -7,9 +7,8 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["disk", "cleanup", "node_modules", "cli"]
 categories = ["command-line-utilities", "filesystem"]
-# TODO: fill in once the repo is published
-# repository = ""
-# homepage = ""
+repository = "https://github.com/zhh2001/cruft"
+homepage = "https://github.com/zhh2001/cruft"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
