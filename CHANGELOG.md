@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-06-03
 
 - `--completions <shell>` prints a shell completion script (bash, zsh, fish,
   powershell, elvish).

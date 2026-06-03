@@ -1,6 +1,6 @@
 [package]
 name = "cruft"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Find and remove reclaimable build and cache directories like node_modules and target"
 license = "MIT OR Apache-2.0"
