@@ -2,11 +2,11 @@
 // on a headless/no-trash machine mark this #[ignore] instead.
 use std::fs;
 
-use reclaim::delete::{Remover, TrashRemover};
+use cruft::delete::{Remover, TrashRemover};
 
 #[test]
 fn trashing_removes_the_original_path() {
-    let unique = format!("reclaim_trash_test_{}", std::process::id());
+    let unique = format!("cruft_trash_test_{}", std::process::id());
     let dir = std::env::temp_dir().join(&unique);
     fs::create_dir_all(dir.join("sub")).unwrap();
     fs::write(dir.join("sub/file.txt"), b"data").unwrap();

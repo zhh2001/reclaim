@@ -7,15 +7,15 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
-use reclaim::delete::{delete_targets, DeleteOpts, TrashRemover};
-use reclaim::filter::{parse_duration, parse_size, Filters};
-use reclaim::format::{human_age, human_size};
-use reclaim::scan::{scan, Found, Kind, SizeMode};
-use reclaim::sort::{sort_found, SortKey};
+use cruft::delete::{delete_targets, DeleteOpts, TrashRemover};
+use cruft::filter::{parse_duration, parse_size, Filters};
+use cruft::format::{human_age, human_size};
+use cruft::scan::{scan, Found, Kind, SizeMode};
+use cruft::sort::{sort_found, SortKey};
 
 #[derive(Parser)]
 #[command(
-    name = "reclaim",
+    name = "cruft",
     version,
     about = "Find disk space you can reclaim: node_modules, Rust target, Python caches"
 )]
@@ -77,20 +77,20 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     if cli.delete && cli.json {
-        eprintln!("reclaim: --json is not supported with --delete");
+        eprintln!("cruft: --json is not supported with --delete");
         return ExitCode::FAILURE;
     }
     if cli.total_only && cli.delete {
-        eprintln!("reclaim: --total-only cannot be combined with --delete");
+        eprintln!("cruft: --total-only cannot be combined with --delete");
         return ExitCode::FAILURE;
     }
     if (cli.yes || cli.dry_run) && !cli.delete {
-        eprintln!("reclaim: --yes and --dry-run only apply with --delete");
+        eprintln!("cruft: --yes and --dry-run only apply with --delete");
         return ExitCode::FAILURE;
     }
 
     if !cli.path.is_dir() {
-        eprintln!("reclaim: {}: not a directory", cli.path.display());
+        eprintln!("cruft: {}: not a directory", cli.path.display());
         return ExitCode::FAILURE;
     }
 
@@ -122,7 +122,7 @@ fn main() -> ExitCode {
     }
 
     // filter -> sort -> limit gives one final list; table, JSON, and the delete
-    // set all read from it, so `reclaim --delete --limit N` trashes exactly the N shown.
+    // set all read from it, so `cruft --delete --limit N` trashes exactly the N shown.
     let mut found = filtered;
     sort_found(&mut found, cli.sort.into(), cli.reverse);
     if let Some(n) = cli.limit {
@@ -172,7 +172,7 @@ impl From<SortArg> for SortKey {
 struct KindList(Vec<Kind>);
 
 fn parse_only(s: &str) -> Result<KindList, String> {
-    reclaim::filter::parse_kinds(s).map(KindList)
+    cruft::filter::parse_kinds(s).map(KindList)
 }
 
 fn run_delete(found: &[Found], dry_run: bool, yes: bool) -> ExitCode {

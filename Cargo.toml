@@ -1,7 +1,15 @@
 [package]
-name = "reclaim"
+name = "cruft"
 version = "0.1.0"
 edition = "2021"
+description = "Find and remove reclaimable build and cache directories like node_modules and target"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["disk", "cleanup", "node_modules", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+# TODO: fill in once the repo is published
+# repository = ""
+# homepage = ""
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -4,8 +4,8 @@ use std::process::{Command, Stdio};
 
 use tempfile::TempDir;
 
-fn reclaim() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_reclaim"))
+fn cruft() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_cruft"))
 }
 
 // one __pycache__ with a ~2 KiB file
@@ -20,7 +20,7 @@ fn fixture() -> TempDir {
 #[test]
 fn delete_abort_exits_zero() {
     let dir = fixture();
-    let mut child = reclaim()
+    let mut child = cruft()
         .arg("--delete")
         .arg(dir.path())
         .stdin(Stdio::piped())
@@ -39,7 +39,7 @@ fn delete_abort_exits_zero() {
 #[test]
 fn delete_filtered_to_empty_does_not_prompt() {
     let dir = fixture();
-    let out = reclaim()
+    let out = cruft()
         .arg("--delete")
         .arg("--min-size")
         .arg("999G")
@@ -58,7 +58,7 @@ fn delete_filtered_to_empty_does_not_prompt() {
 #[test]
 fn invalid_min_size_is_an_error() {
     let dir = fixture();
-    let out = reclaim()
+    let out = cruft()
         .arg("--min-size")
         .arg("abc")
         .arg(dir.path())
@@ -69,10 +69,10 @@ fn invalid_min_size_is_an_error() {
 
 #[test]
 fn help_lists_every_type() {
-    let out = reclaim().arg("--help").output().unwrap();
+    let out = cruft().arg("--help").output().unwrap();
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
-    for k in reclaim::scan::Kind::ALL {
+    for k in cruft::scan::Kind::ALL {
         assert!(help.contains(k.label()), "help is missing {}", k.label());
     }
 }
@@ -80,7 +80,7 @@ fn help_lists_every_type() {
 #[test]
 fn unknown_only_type_lists_valid_values() {
     let dir = fixture();
-    let out = reclaim()
+    let out = cruft()
         .arg("--only")
         .arg("bogus")
         .arg(dir.path())
@@ -101,7 +101,7 @@ fn min_size_filters_the_table() {
     fs::create_dir_all(&small).unwrap();
     fs::write(small.join("x"), vec![b'x'; 10]).unwrap();
 
-    let out = reclaim()
+    let out = cruft()
         .arg("--min-size")
         .arg("100K")
         .arg(dir.path())
@@ -129,7 +129,7 @@ fn two_caches() -> TempDir {
 #[test]
 fn limit_caps_the_table() {
     let dir = two_caches();
-    let out = reclaim()
+    let out = cruft()
         .arg("--limit")
         .arg("1")
         .arg("--sort")
@@ -147,7 +147,7 @@ fn limit_caps_the_table() {
 #[test]
 fn limit_zero_is_rejected() {
     let dir = fixture();
-    let out = reclaim()
+    let out = cruft()
         .arg("--limit")
         .arg("0")
         .arg(dir.path())
@@ -159,7 +159,7 @@ fn limit_zero_is_rejected() {
 #[test]
 fn total_only_prints_only_the_total() {
     let dir = two_caches();
-    let out = reclaim()
+    let out = cruft()
         .arg("--total-only")
         .arg(dir.path())
         .output()
@@ -175,7 +175,7 @@ fn total_only_prints_only_the_total() {
 #[test]
 fn total_only_json_is_just_the_total() {
     let dir = two_caches();
-    let out = reclaim()
+    let out = cruft()
         .arg("--total-only")
         .arg("--json")
         .arg(dir.path())
@@ -191,7 +191,7 @@ fn total_only_json_is_just_the_total() {
 #[test]
 fn total_only_with_delete_errors() {
     let dir = fixture();
-    let out = reclaim()
+    let out = cruft()
         .arg("--total-only")
         .arg("--delete")
         .arg(dir.path())
@@ -205,7 +205,7 @@ fn total_only_with_delete_errors() {
 #[test]
 fn total_only_ignores_limit() {
     let dir = two_caches();
-    let with_limit = reclaim()
+    let with_limit = cruft()
         .arg("--total-only")
         .arg("--json")
         .arg("--limit")
@@ -213,7 +213,7 @@ fn total_only_ignores_limit() {
         .arg(dir.path())
         .output()
         .unwrap();
-    let without = reclaim()
+    let without = cruft()
         .arg("--total-only")
         .arg("--json")
         .arg(dir.path())

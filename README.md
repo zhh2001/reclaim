@@ -1,107 +1,99 @@
-# reclaim
+# cruft
 
-Scans a directory tree for build and cache directories that are safe to delete
-and tells you how much space they're using. By default it only reports;
-`--delete` moves the matches to the trash after you confirm.
+A command-line tool that finds build and cache directories you can safely delete
+(`node_modules`, Rust `target`, Python caches, and so on) and reports how much
+space they take. It can also move them to the trash.
+
+## Install
+
+```sh
+cargo install cruft
+```
+
+Or build from source:
+
+```sh
+git clone <repo-url>
+cd cruft
+cargo build --release
+# binary at target/release/cruft
+```
 
 ## Usage
 
-```sh
-reclaim [PATH]
-```
-
-`PATH` defaults to the current directory. The scan recurses, including into
-directories that are usually gitignored (`node_modules`, `target`), since those
-are the whole point.
+Scan the current directory:
 
 ```txt
-$ reclaim ~/code
-PATH                       TYPE               SIZE  MODIFIED
-web/node_modules           node_modules    1.2 GiB  3 months ago
-svc/target                 target        430.1 MiB  2 days ago
-api/.venv                  venv           88.4 MiB  5 months ago
+$ cruft
+PATH              TYPE               SIZE  MODIFIED
+web/node_modules  node_modules    1.1 MiB  just now
+svc/target        target        392.0 KiB  just now
+api/.venv         venv           92.0 KiB  6 months ago
+py/__pycache__    __pycache__     8.0 KiB  just now
 
-Reclaimable total: 1.7 GiB
+Reclaimable total: 1.6 MiB
 ```
 
-Use `--json` for machine-readable output.
-
-## Filtering
-
-Narrow the results (and, with `--delete`, the set that gets removed):
-
-- `--min-size <SIZE>` — keep entries at least this big. Plain number is bytes;
-  `K`/`M`/`G`/`T` suffixes are 1024-based (`500K`, `1.5G`). Uses the current
-  size mode, so it follows `--apparent`.
-- `--older-than <DURATION>` — keep entries untouched for at least this long,
-  based on the newest mtime in the tree. Units are `h`, `d`, `w` (`12h`, `30d`,
-  `2w`); minutes/months aren't accepted to avoid the `m` ambiguity.
-- `--only <TYPES>` — comma-separated, from: `node_modules`, `target`,
-  `__pycache__`, `venv`, `pytest_cache`, `mypy_cache`.
-
-Combining them is an AND: an entry must pass every filter to be kept. If nothing
-matches, reclaim says so and exits without deleting.
-
-## Output
-
-- `--sort <size|modified|path>` — order by size (biggest first, the default),
-  modified (oldest first), or path. Ties break on path, so the order is stable.
-- `-r`, `--reverse` — flip the sort direction.
-- `--limit <N>` — keep only the first N after sorting (N >= 1).
-- `--total-only` — print just the reclaimable total, no table. With `--json` it
-  emits `{"total_bytes": N}`. It reports the full filtered total and ignores
-  `--limit`; it can't be combined with `--delete`.
-
-Filtering, sorting, and `--limit` all feed the same final list, so
-`reclaim --delete --limit N` trashes exactly the N rows it would have shown.
-
-## Deleting
+More examples:
 
 ```sh
-reclaim --delete [PATH]
+cruft ~/code                        # scan a specific path
+cruft --min-size 100M               # filters combine as AND
+cruft --older-than 30d
+cruft --only node_modules,target
+cruft --sort modified               # oldest first
+cruft --limit 10                    # ten largest
+cruft --total-only                  # just the total, no table
 ```
 
-This scans, prints the same table, then asks before doing anything. Matches are
-moved to the trash (XDG trash on Linux), never permanently removed, so a mistake
-is recoverable.
+Delete: look first, then do it. Matches go to the trash; without `-y` you're
+asked to confirm.
 
-- `-y`, `--yes` — skip the prompt
-- `--dry-run` — print what would be trashed and stop; if combined with `--yes`,
-  dry-run wins and nothing is deleted
+```sh
+cruft --delete --dry-run
+cruft --delete                      # prompts before moving anything
+cruft --delete -y                   # no prompt
+```
 
-If a directory can't be trashed (permissions, a filesystem without trash
-support) it's reported and the rest still proceed. `--delete` can't be combined
-with `--json`.
+`--delete` honours the filters and `--limit`, so it only removes what the same
+command would have listed.
 
-## What it detects
+## What it matches
 
-Cache directories with an unambiguous, tool-specific name match anywhere:
+Directories whose name is a tool-specific cache match anywhere:
+`__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`.
 
-- `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`
-
-Everything else has an ambiguous name, so it only matches when the right
-manifest sits in the same parent directory:
+Everything else has an ambiguous name, so it only counts when the matching
+project file sits next to it:
 
 - `node_modules` — `package.json`
 - `target` — `Cargo.toml` (Rust) or `pom.xml` (Maven)
 - `.next`, `.nuxt`, `.turbo`, `.svelte-kit`, `.parcel-cache` — `package.json`
-- `.gradle` — `build.gradle`, `build.gradle.kts`, `settings.gradle`, or `settings.gradle.kts`
+- `.gradle` — a `build.gradle`/`settings.gradle` file (`.kts` too)
 - `.tox` — `tox.ini`
 - `.venv` / `venv` — a `pyvenv.cfg` inside
 
-`dist` and `build` are deliberately left out; the names are too ambiguous to
-match safely.
+`dist` and `build` are left out on purpose; the names are too ambiguous to match
+without risking a real source directory. Once a directory matches, its contents
+aren't scanned again, so nested matches are counted once.
 
-Once a directory matches it isn't scanned further, so a match nested inside
-another match is counted once, as part of the outer one.
+## Safety
 
-SIZE is on-disk usage (block allocation, hard links counted once), matching
-`du`. Pass `--apparent` to sum logical file sizes instead, counting every hard
-link. Off Unix only the apparent figure is available. MODIFIED is the newest
-mtime found anywhere in the directory, not the directory's own timestamp.
+Deletion moves directories to the trash (the XDG trash on Linux), so a mistake
+is recoverable. Nothing is removed without `-y` or an interactive `y`. If a
+directory can't be trashed, it's reported and the rest still proceed.
 
-## Build
+## Accuracy
 
-```sh
-cargo build --release
-```
+Sizes are on-disk usage, the same as `du`: block allocation, with hard links
+counted once. Use `--apparent` for logical file sizes instead. MODIFIED is the
+newest mtime found anywhere in the directory.
+
+One caveat: pnpm stores packages in a global store and hard-links them into each
+`node_modules`, so deleting one project's `node_modules` may free less than the
+reported size, since the linked files still live in the store.
+
+## License
+
+MIT OR Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE).
