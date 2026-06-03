@@ -16,6 +16,8 @@ With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
 cargo binstall cruft
 ```
 
+If `cargo binstall` falls back to building from source, you're probably hitting GitHub's unauthenticated API rate limit — common behind a shared or corporate IP. Set `GITHUB_TOKEN` to any personal access token (no scopes needed for a public repo) and it'll fetch the prebuilt binary.
+
 From crates.io (builds from source):
 
 ```sh
