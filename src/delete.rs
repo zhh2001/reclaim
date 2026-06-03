@@ -238,6 +238,44 @@ mod tests {
     }
 
     #[test]
+    fn sort_then_limit_then_delete_removes_exactly_top_n() {
+        use crate::sort::{sort_found, SortKey};
+
+        let mut items = vec![
+            Found {
+                path: PathBuf::from("mid"),
+                rel: PathBuf::from("mid"),
+                kind: Kind::Target,
+                size: 200,
+                modified: None,
+            },
+            Found {
+                path: PathBuf::from("big"),
+                rel: PathBuf::from("big"),
+                kind: Kind::Target,
+                size: 500,
+                modified: None,
+            },
+            Found {
+                path: PathBuf::from("small"),
+                rel: PathBuf::from("small"),
+                kind: Kind::Target,
+                size: 10,
+                modified: None,
+            },
+        ];
+        sort_found(&mut items, SortKey::Size, false);
+        items.truncate(2); // the top 2 by size
+
+        let r = FakeRemover::new();
+        let out = delete_targets(&items, opts(false, true), || true, &r);
+
+        assert_eq!(out.moved, 2);
+        // exactly the two largest, nothing else
+        assert_eq!(r.calls(), vec![PathBuf::from("big"), PathBuf::from("mid")]);
+    }
+
+    #[test]
     fn a_failure_does_not_stop_the_rest() {
         let targets = vec![found("a", 100), found("b", 200), found("c", 400)];
         let r = FakeRemover::failing(&["b"]);

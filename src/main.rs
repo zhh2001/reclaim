@@ -1,15 +1,17 @@
 use std::io::{self, Write};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
 use reclaim::delete::{delete_targets, DeleteOpts, TrashRemover};
 use reclaim::filter::{parse_duration, parse_size, Filters};
 use reclaim::format::{human_age, human_size};
 use reclaim::scan::{scan, Found, Kind, SizeMode};
+use reclaim::sort::{sort_found, SortKey};
 
 #[derive(Parser)]
 #[command(
@@ -42,6 +44,22 @@ struct Cli {
     #[arg(long, value_parser = parse_only)]
     only: Option<KindList>,
 
+    /// Sort by size (biggest), modified (oldest), or path
+    #[arg(long, value_enum, default_value = "size")]
+    sort: SortArg,
+
+    /// Reverse the sort order
+    #[arg(short = 'r', long)]
+    reverse: bool,
+
+    /// Show only the largest N entries (after sorting)
+    #[arg(long)]
+    limit: Option<NonZeroUsize>,
+
+    /// Print just the reclaimable total, no table (ignores --limit)
+    #[arg(long)]
+    total_only: bool,
+
     /// Move the reclaimable directories to the trash after scanning
     #[arg(long)]
     delete: bool,
@@ -60,6 +78,10 @@ fn main() -> ExitCode {
 
     if cli.delete && cli.json {
         eprintln!("reclaim: --json is not supported with --delete");
+        return ExitCode::FAILURE;
+    }
+    if cli.total_only && cli.delete {
+        eprintln!("reclaim: --total-only cannot be combined with --delete");
         return ExitCode::FAILURE;
     }
     if (cli.yes || cli.dry_run) && !cli.delete {
@@ -83,11 +105,30 @@ fn main() -> ExitCode {
         kinds: cli.only.map(|k| k.0),
     };
 
-    let mut found = filters.apply(scan(&cli.path, mode), SystemTime::now());
-    found.sort_by(|a, b| b.size.cmp(&a.size));
+    let filtered = filters.apply(scan(&cli.path, mode), SystemTime::now());
 
-    // Everything below — table, JSON, and the delete set — works off the same
-    // filtered list, so `reclaim --delete <filters>` trashes exactly what's shown.
+    // total-only reports the full filtered sum and ignores --limit
+    if cli.total_only {
+        let total: u64 = filtered.iter().map(|f| f.size).sum();
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&TotalReport { total_bytes: total }).unwrap()
+            );
+        } else {
+            println!("Reclaimable total: {}", human_size(total));
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    // filter -> sort -> limit gives one final list; table, JSON, and the delete
+    // set all read from it, so `reclaim --delete --limit N` trashes exactly the N shown.
+    let mut found = filtered;
+    sort_found(&mut found, cli.sort.into(), cli.reverse);
+    if let Some(n) = cli.limit {
+        found.truncate(n.get());
+    }
+
     if found.is_empty() {
         if cli.json {
             print_json(&found);
@@ -107,6 +148,23 @@ fn main() -> ExitCode {
     } else {
         print_table(&found);
         ExitCode::SUCCESS
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SortArg {
+    Size,
+    Modified,
+    Path,
+}
+
+impl From<SortArg> for SortKey {
+    fn from(s: SortArg) -> Self {
+        match s {
+            SortArg::Size => SortKey::Size,
+            SortArg::Modified => SortKey::Modified,
+            SortArg::Path => SortKey::Path,
+        }
     }
 }
 
@@ -253,6 +311,11 @@ struct JsonEntry<'a> {
 #[derive(Serialize)]
 struct JsonReport<'a> {
     entries: Vec<JsonEntry<'a>>,
+    total_bytes: u64,
+}
+
+#[derive(Serialize)]
+struct TotalReport {
     total_bytes: u64,
 }
 

@@ -113,3 +113,113 @@ fn min_size_filters_the_table() {
     assert!(stdout.contains("__pycache__"));
     assert!(!stdout.contains("mypy_cache"));
 }
+
+// a big __pycache__ and a small .mypy_cache
+fn two_caches() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("a/__pycache__");
+    fs::create_dir_all(&big).unwrap();
+    fs::write(big.join("x"), vec![b'x'; 200_000]).unwrap();
+    let small = dir.path().join("b/.mypy_cache");
+    fs::create_dir_all(&small).unwrap();
+    fs::write(small.join("x"), vec![b'x'; 100]).unwrap();
+    dir
+}
+
+#[test]
+fn limit_caps_the_table() {
+    let dir = two_caches();
+    let out = reclaim()
+        .arg("--limit")
+        .arg("1")
+        .arg("--sort")
+        .arg("size")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("__pycache__")); // the bigger one
+    assert!(!stdout.contains("mypy_cache"));
+}
+
+#[test]
+fn limit_zero_is_rejected() {
+    let dir = fixture();
+    let out = reclaim()
+        .arg("--limit")
+        .arg("0")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn total_only_prints_only_the_total() {
+    let dir = two_caches();
+    let out = reclaim()
+        .arg("--total-only")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Reclaimable total:"));
+    assert!(!stdout.contains("PATH"));
+    assert!(!stdout.contains("__pycache__"));
+}
+
+#[test]
+fn total_only_json_is_just_the_total() {
+    let dir = two_caches();
+    let out = reclaim()
+        .arg("--total-only")
+        .arg("--json")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("total_bytes"));
+    assert!(!stdout.contains("entries"));
+}
+
+#[test]
+fn total_only_with_delete_errors() {
+    let dir = fixture();
+    let out = reclaim()
+        .arg("--total-only")
+        .arg("--delete")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be combined with --delete"));
+}
+
+#[test]
+fn total_only_ignores_limit() {
+    let dir = two_caches();
+    let with_limit = reclaim()
+        .arg("--total-only")
+        .arg("--json")
+        .arg("--limit")
+        .arg("1")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    let without = reclaim()
+        .arg("--total-only")
+        .arg("--json")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // the total spans both caches regardless of --limit
+    assert_eq!(with_limit.stdout, without.stdout);
+}

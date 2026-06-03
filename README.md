@@ -42,6 +42,19 @@ Narrow the results (and, with `--delete`, the set that gets removed):
 Combining them is an AND: an entry must pass every filter to be kept. If nothing
 matches, reclaim says so and exits without deleting.
 
+## Output
+
+- `--sort <size|modified|path>` — order by size (biggest first, the default),
+  modified (oldest first), or path. Ties break on path, so the order is stable.
+- `-r`, `--reverse` — flip the sort direction.
+- `--limit <N>` — keep only the first N after sorting (N >= 1).
+- `--total-only` — print just the reclaimable total, no table. With `--json` it
+  emits `{"total_bytes": N}`. It reports the full filtered total and ignores
+  `--limit`; it can't be combined with `--delete`.
+
+Filtering, sorting, and `--limit` all feed the same final list, so
+`reclaim --delete --limit N` trashes exactly the N rows it would have shown.
+
 ## Deleting
 
 ```sh
