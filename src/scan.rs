@@ -31,6 +31,8 @@ impl Kind {
 
 #[derive(Debug, Clone)]
 pub struct Found {
+    // full path as walked, used for deletion; rel is for display
+    pub path: PathBuf,
     pub rel: PathBuf,
     pub kind: Kind,
     pub size: u64,
@@ -54,6 +56,7 @@ pub fn scan(root: &Path) -> Vec<Found> {
         if let Some(kind) = classify(path) {
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
             out.push(Found {
+                path: path.to_path_buf(),
                 rel,
                 kind,
                 size: dir_size(path),
@@ -203,6 +206,16 @@ mod tests {
         let found = scan(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].size, 300);
+    }
+
+    #[test]
+    fn root_itself_is_never_classified() {
+        // scanning a dir that *is* a match (e.g. point straight at a __pycache__)
+        // must not report the root; deletion relies on this.
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("__pycache__");
+        touch(&root.join("m.pyc"), 30);
+        assert!(scan(&root).is_empty());
     }
 
     #[test]

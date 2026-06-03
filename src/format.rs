@@ -67,7 +67,13 @@ mod tests {
         assert_eq!(human_age(Duration::from_secs(3600)), "1 hour ago");
         assert_eq!(human_age(Duration::from_secs(86400)), "1 day ago");
         assert_eq!(human_age(Duration::from_secs(3 * 86400)), "3 days ago");
-        assert_eq!(human_age(Duration::from_secs(3 * 2_629_746)), "3 months ago");
-        assert_eq!(human_age(Duration::from_secs(2 * 31_556_952)), "2 years ago");
+        assert_eq!(
+            human_age(Duration::from_secs(3 * 2_629_746)),
+            "3 months ago"
+        );
+        assert_eq!(
+            human_age(Duration::from_secs(2 * 31_556_952)),
+            "2 years ago"
+        );
     }
 }

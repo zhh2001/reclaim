@@ -1,8 +1,8 @@
 # reclaim
 
 Scans a directory tree for build and cache directories that are safe to delete
-and tells you how much space they're using. This version only reports — it never
-deletes anything.
+and tells you how much space they're using. By default it only reports;
+`--delete` moves the matches to the trash after you confirm.
 
 ## Usage
 
@@ -25,6 +25,24 @@ Reclaimable total: 1.7 GiB
 ```
 
 Use `--json` for machine-readable output.
+
+## Deleting
+
+```
+reclaim --delete [PATH]
+```
+
+This scans, prints the same table, then asks before doing anything. Matches are
+moved to the trash (XDG trash on Linux), never permanently removed, so a mistake
+is recoverable.
+
+- `-y`, `--yes` — skip the prompt
+- `--dry-run` — print what would be trashed and stop; if combined with `--yes`,
+  dry-run wins and nothing is deleted
+
+If a directory can't be trashed (permissions, a filesystem without trash
+support) it's reported and the rest still proceed. `--delete` can't be combined
+with `--json`.
 
 ## What it detects
 
