@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-06-03
 
 - Prebuilt binaries for each platform on GitHub Releases, plus cargo-binstall
   support.
