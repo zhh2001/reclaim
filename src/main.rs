@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
-use cruft::delete::{delete_targets, DeleteOpts, TrashRemover};
+use cruft::delete::{delete_interactive, delete_targets, Decision, DeleteOpts, TrashRemover};
 use cruft::filter::{parse_duration, parse_size, Filters};
 use cruft::format::{human_age, human_size};
 use cruft::scan::{scan, Found, Kind, SizeMode};
@@ -68,6 +68,10 @@ struct Cli {
     #[arg(short = 'y', long)]
     yes: bool,
 
+    /// With --delete, ask about each directory (y/n/q)
+    #[arg(short = 'i', long)]
+    interactive: bool,
+
     /// With --delete, list what would be trashed without touching anything
     #[arg(long)]
     dry_run: bool,
@@ -84,8 +88,12 @@ fn main() -> ExitCode {
         eprintln!("cruft: --total-only cannot be combined with --delete");
         return ExitCode::FAILURE;
     }
-    if (cli.yes || cli.dry_run) && !cli.delete {
-        eprintln!("cruft: --yes and --dry-run only apply with --delete");
+    if (cli.yes || cli.dry_run || cli.interactive) && !cli.delete {
+        eprintln!("cruft: --yes, --interactive, and --dry-run only apply with --delete");
+        return ExitCode::FAILURE;
+    }
+    if cli.yes && cli.interactive {
+        eprintln!("cruft: -y and --interactive are mutually exclusive");
         return ExitCode::FAILURE;
     }
 
@@ -141,7 +149,7 @@ fn main() -> ExitCode {
     }
 
     if cli.delete {
-        run_delete(&found, cli.dry_run, cli.yes)
+        run_delete(&found, cli.dry_run, cli.yes, cli.interactive)
     } else if cli.json {
         print_json(&found);
         ExitCode::SUCCESS
@@ -175,7 +183,7 @@ fn parse_only(s: &str) -> Result<KindList, String> {
     cruft::filter::parse_kinds(s).map(KindList)
 }
 
-fn run_delete(found: &[Found], dry_run: bool, yes: bool) -> ExitCode {
+fn run_delete(found: &[Found], dry_run: bool, yes: bool, interactive: bool) -> ExitCode {
     print_table(found);
 
     let total: u64 = found.iter().map(|f| f.size).sum();
@@ -191,24 +199,45 @@ fn run_delete(found: &[Found], dry_run: bool, yes: bool) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let outcome = delete_targets(
-        found,
-        DeleteOpts { dry_run, yes },
-        || prompt_confirm(found.len(), total),
-        &TrashRemover,
-    );
+    println!();
+    let outcome = if interactive {
+        delete_interactive(found, prompt_item, &TrashRemover)
+    } else {
+        delete_targets(
+            found,
+            DeleteOpts { dry_run, yes },
+            || prompt_confirm(found.len(), total),
+            &TrashRemover,
+        )
+    };
 
     if outcome.aborted {
         println!("Aborted, nothing deleted.");
         return ExitCode::SUCCESS;
     }
 
-    println!(
-        "\nMoved {} {} to trash, freed ~{}.",
-        outcome.moved,
-        noun(outcome.moved),
-        human_size(outcome.freed)
-    );
+    // anything that moved/disappeared between the scan and now
+    for path in &outcome.changed {
+        eprintln!("skipped (changed since scan): {}", path.display());
+    }
+
+    if interactive {
+        println!(
+            "\nMoved {} {} to trash, freed ~{}, skipped {}.",
+            outcome.moved,
+            noun(outcome.moved),
+            human_size(outcome.freed),
+            outcome.skipped
+        );
+    } else {
+        println!(
+            "\nMoved {} {} to trash, freed ~{}.",
+            outcome.moved,
+            noun(outcome.moved),
+            human_size(outcome.freed)
+        );
+    }
+
     if !outcome.failures.is_empty() {
         eprintln!("Failed to move:");
         for (path, err) in &outcome.failures {
@@ -217,6 +246,27 @@ fn run_delete(found: &[Found], dry_run: bool, yes: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+fn prompt_item(f: &Found) -> Decision {
+    print!(
+        "{} ({}, {}) trash? [y/N/q] ",
+        f.rel.display(),
+        f.kind.label(),
+        human_size(f.size)
+    );
+    if io::stdout().flush().is_err() {
+        return Decision::Quit;
+    }
+    let mut line = String::new();
+    match io::stdin().read_line(&mut line) {
+        Ok(0) | Err(_) => Decision::Quit, // EOF or error: stop rather than loop
+        Ok(_) => match line.trim() {
+            "y" | "Y" => Decision::Trash,
+            "q" | "Q" => Decision::Quit,
+            _ => Decision::Skip,
+        },
+    }
 }
 
 fn noun(n: usize) -> &'static str {

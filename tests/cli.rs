@@ -189,6 +189,29 @@ fn total_only_json_is_just_the_total() {
 }
 
 #[test]
+fn yes_and_interactive_conflict() {
+    let dir = fixture();
+    let out = cruft()
+        .arg("--delete")
+        .arg("-y")
+        .arg("-i")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("mutually exclusive"));
+    assert!(dir.path().join("proj/__pycache__").exists());
+}
+
+#[test]
+fn interactive_without_delete_errors() {
+    let dir = fixture();
+    let out = cruft().arg("-i").arg(dir.path()).output().unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
 fn total_only_with_delete_errors() {
     let dir = fixture();
     let out = cruft()

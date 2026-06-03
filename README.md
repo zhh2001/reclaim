@@ -53,10 +53,12 @@ asked to confirm.
 cruft --delete --dry-run
 cruft --delete                      # prompts before moving anything
 cruft --delete -y                   # no prompt
+cruft --delete -i                   # ask per directory (y/n/q)
 ```
 
 `--delete` honours the filters and `--limit`, so it only removes what the same
-command would have listed.
+command would have listed. Each directory is re-checked right before it's moved;
+if it changed since the scan it's reported and skipped.
 
 ## What it matches
 
