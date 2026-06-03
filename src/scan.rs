@@ -2,76 +2,95 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use serde::Serialize;
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Kind {
-    NodeModules,
-    Target,
-    Pycache,
-    Venv,
-    PytestCache,
-    MypyCache,
-    RuffCache,
-    Next,
-    Nuxt,
-    Turbo,
-    SvelteKit,
-    ParcelCache,
-    Gradle,
-    Tox,
+#[derive(Debug, Clone)]
+pub enum Anchor {
+    // matches wherever the name appears (a tool-specific cache name)
+    Anywhere,
+    // matches when one of these files sits next to the directory
+    Sibling(Vec<String>),
+    // matches when one of these files sits inside the directory (venv's pyvenv.cfg)
+    Child(Vec<String>),
 }
 
-impl Kind {
-    pub const ALL: [Kind; 14] = [
-        Kind::NodeModules,
-        Kind::Target,
-        Kind::Pycache,
-        Kind::Venv,
-        Kind::PytestCache,
-        Kind::MypyCache,
-        Kind::RuffCache,
-        Kind::Next,
-        Kind::Nuxt,
-        Kind::Turbo,
-        Kind::SvelteKit,
-        Kind::ParcelCache,
-        Kind::Gradle,
-        Kind::Tox,
-    ];
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub label: String,
+    pub dir: String,
+    pub anchor: Anchor,
+}
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Kind::NodeModules => "node_modules",
-            Kind::Target => "target",
-            Kind::Pycache => "__pycache__",
-            Kind::Venv => "venv",
-            Kind::PytestCache => "pytest_cache",
-            Kind::MypyCache => "mypy_cache",
-            Kind::RuffCache => "ruff_cache",
-            Kind::Next => "next",
-            Kind::Nuxt => "nuxt",
-            Kind::Turbo => "turbo",
-            Kind::SvelteKit => "svelte-kit",
-            Kind::ParcelCache => "parcel-cache",
-            Kind::Gradle => "gradle",
-            Kind::Tox => "tox",
+impl Rule {
+    fn matches(&self, name: &str, path: &Path) -> bool {
+        if self.dir != name {
+            return false;
+        }
+        match &self.anchor {
+            Anchor::Anywhere => true,
+            Anchor::Sibling(files) => path
+                .parent()
+                .map(|p| files.iter().any(|f| p.join(f).is_file()))
+                .unwrap_or(false),
+            Anchor::Child(files) => files.iter().any(|f| path.join(f).is_file()),
         }
     }
+}
 
-    pub fn from_label(s: &str) -> Option<Kind> {
-        Kind::ALL.into_iter().find(|k| k.label() == s)
-    }
+pub fn builtin_rules() -> Vec<Rule> {
+    let sibling = |label: &str, dir: &str, anchors: &[&str]| Rule {
+        label: label.into(),
+        dir: dir.into(),
+        anchor: Anchor::Sibling(anchors.iter().map(|s| s.to_string()).collect()),
+    };
+    let anywhere = |label: &str, dir: &str| Rule {
+        label: label.into(),
+        dir: dir.into(),
+        anchor: Anchor::Anywhere,
+    };
+    let child = |label: &str, dir: &str, files: &[&str]| Rule {
+        label: label.into(),
+        dir: dir.into(),
+        anchor: Anchor::Child(files.iter().map(|s| s.to_string()).collect()),
+    };
 
-    pub fn labels_joined() -> String {
-        Kind::ALL
-            .iter()
-            .map(|k| k.label())
-            .collect::<Vec<_>>()
-            .join(", ")
+    vec![
+        sibling("node_modules", "node_modules", &["package.json"]),
+        sibling("target", "target", &["Cargo.toml", "pom.xml"]),
+        anywhere("__pycache__", "__pycache__"),
+        child("venv", ".venv", &["pyvenv.cfg"]),
+        child("venv", "venv", &["pyvenv.cfg"]),
+        anywhere("pytest_cache", ".pytest_cache"),
+        anywhere("mypy_cache", ".mypy_cache"),
+        anywhere("ruff_cache", ".ruff_cache"),
+        sibling("next", ".next", &["package.json"]),
+        sibling("nuxt", ".nuxt", &["package.json"]),
+        sibling("turbo", ".turbo", &["package.json"]),
+        sibling("svelte-kit", ".svelte-kit", &["package.json"]),
+        sibling("parcel-cache", ".parcel-cache", &["package.json"]),
+        sibling(
+            "gradle",
+            ".gradle",
+            &[
+                "build.gradle",
+                "build.gradle.kts",
+                "settings.gradle",
+                "settings.gradle.kts",
+            ],
+        ),
+        sibling("tox", ".tox", &["tox.ini"]),
+    ]
+}
+
+// distinct labels in rule order; used for --only validation and --help
+pub fn labels(rules: &[Rule]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in rules {
+        if !out.contains(&r.label) {
+            out.push(r.label.clone());
+        }
     }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -79,7 +98,7 @@ pub struct Found {
     // full path as walked, used for deletion; rel is for display
     pub path: PathBuf,
     pub rel: PathBuf,
-    pub kind: Kind,
+    pub kind: String,
     pub size: u64,
     pub modified: Option<SystemTime>,
 }
@@ -92,7 +111,7 @@ pub enum SizeMode {
     Apparent,
 }
 
-pub fn scan(root: &Path, mode: SizeMode) -> Vec<Found> {
+pub fn scan(root: &Path, rules: &[Rule], mode: SizeMode) -> Vec<Found> {
     let mut out = Vec::new();
     // walkdir doesn't read .gitignore, so node_modules/target get visited; it also
     // doesn't follow symlinks by default, which keeps us from escaping the tree.
@@ -106,13 +125,13 @@ pub fn scan(root: &Path, mode: SizeMode) -> Vec<Found> {
             continue;
         }
         let path = entry.path();
-        if let Some(kind) = classify(path) {
+        if let Some(label) = classify(path, rules) {
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
             let (size, modified) = measure(path, mode);
             out.push(Found {
                 path: path.to_path_buf(),
                 rel,
-                kind,
+                kind: label.to_string(),
                 size,
                 modified,
             });
@@ -124,42 +143,12 @@ pub fn scan(root: &Path, mode: SizeMode) -> Vec<Found> {
     out
 }
 
-fn classify(path: &Path) -> Option<Kind> {
+fn classify<'a>(path: &Path, rules: &'a [Rule]) -> Option<&'a str> {
     let name = path.file_name()?.to_str()?;
-    match name {
-        // anchored: only a match when the right manifest sits next to the dir
-        "node_modules" => parent_has(path, &["package.json"]).then_some(Kind::NodeModules),
-        "target" => parent_has(path, &["Cargo.toml", "pom.xml"]).then_some(Kind::Target),
-        ".next" => parent_has(path, &["package.json"]).then_some(Kind::Next),
-        ".nuxt" => parent_has(path, &["package.json"]).then_some(Kind::Nuxt),
-        ".turbo" => parent_has(path, &["package.json"]).then_some(Kind::Turbo),
-        ".svelte-kit" => parent_has(path, &["package.json"]).then_some(Kind::SvelteKit),
-        ".parcel-cache" => parent_has(path, &["package.json"]).then_some(Kind::ParcelCache),
-        ".gradle" => parent_has(
-            path,
-            &[
-                "build.gradle",
-                "build.gradle.kts",
-                "settings.gradle",
-                "settings.gradle.kts",
-            ],
-        )
-        .then_some(Kind::Gradle),
-        ".tox" => parent_has(path, &["tox.ini"]).then_some(Kind::Tox),
-        ".venv" | "venv" => path.join("pyvenv.cfg").is_file().then_some(Kind::Venv),
-        // tool-specific cache names, unambiguous wherever they appear
-        "__pycache__" => Some(Kind::Pycache),
-        ".pytest_cache" => Some(Kind::PytestCache),
-        ".mypy_cache" => Some(Kind::MypyCache),
-        ".ruff_cache" => Some(Kind::RuffCache),
-        _ => None,
-    }
-}
-
-fn parent_has(path: &Path, anchors: &[&str]) -> bool {
-    path.parent()
-        .map(|p| anchors.iter().any(|a| p.join(a).is_file()))
-        .unwrap_or(false)
+    rules
+        .iter()
+        .find(|r| r.matches(name, path))
+        .map(|r| r.label.as_str())
 }
 
 // One jwalk pass per candidate gives us both the size and the newest mtime in
@@ -252,9 +241,13 @@ mod tests {
         f.write_all(&vec![b'x'; bytes]).unwrap();
     }
 
-    fn kinds(found: &[Found]) -> Vec<Kind> {
-        let mut k: Vec<Kind> = found.iter().map(|f| f.kind).collect();
-        k.sort_by_key(|k| k.label());
+    fn run(root: &Path) -> Vec<Found> {
+        scan(root, &builtin_rules(), SizeMode::Disk)
+    }
+
+    fn kinds(found: &[Found]) -> Vec<String> {
+        let mut k: Vec<String> = found.iter().map(|f| f.kind.clone()).collect();
+        k.sort();
         k
     }
 
@@ -262,15 +255,14 @@ mod tests {
     fn finds_node_modules_only_with_package_json() {
         let dir = tempdir().unwrap();
         let root = dir.path();
-        // legit JS project
         touch(&root.join("app/package.json"), 10);
         touch(&root.join("app/node_modules/left-pad/index.js"), 100);
         // a node_modules with no package.json sibling: not ours
         touch(&root.join("random/node_modules/stuff.txt"), 100);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::NodeModules);
+        assert_eq!(found[0].kind, "node_modules");
         assert_eq!(found[0].rel, PathBuf::from("app/node_modules"));
     }
 
@@ -282,9 +274,9 @@ mod tests {
         touch(&root.join("crate/target/debug/bin"), 500);
         touch(&root.join("notrust/target/whatever"), 500);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::Target);
+        assert_eq!(found[0].kind, "target");
     }
 
     #[test]
@@ -294,16 +286,16 @@ mod tests {
         touch(&root.join("svc/pom.xml"), 10);
         touch(&root.join("svc/target/classes/A.class"), 100);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::Target);
+        assert_eq!(found[0].kind, "target");
     }
 
     #[test]
     fn target_ignored_without_cargo_or_pom() {
         let dir = tempdir().unwrap();
         touch(&dir.path().join("plain/target/stuff"), 100);
-        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
+        assert!(run(dir.path()).is_empty());
     }
 
     #[test]
@@ -315,16 +307,9 @@ mod tests {
             touch(&root.join(format!("app/{d}/f")), 20);
         }
 
-        let found = scan(root, SizeMode::Disk);
         assert_eq!(
-            kinds(&found),
-            vec![
-                Kind::Next,
-                Kind::Nuxt,
-                Kind::ParcelCache,
-                Kind::SvelteKit,
-                Kind::Turbo,
-            ]
+            kinds(&run(root)),
+            vec!["next", "nuxt", "parcel-cache", "svelte-kit", "turbo"]
         );
     }
 
@@ -335,7 +320,7 @@ mod tests {
         for d in [".next", ".nuxt", ".turbo", ".svelte-kit", ".parcel-cache"] {
             touch(&root.join(format!("nope/{d}/f")), 20);
         }
-        assert!(scan(root, SizeMode::Disk).is_empty());
+        assert!(run(root).is_empty());
     }
 
     #[test]
@@ -351,9 +336,9 @@ mod tests {
             touch(&root.join(format!("proj/{anchor}")), 10);
             touch(&root.join("proj/.gradle/x"), 50);
 
-            let found = scan(root, SizeMode::Disk);
+            let found = run(root);
             assert_eq!(found.len(), 1, "anchor {anchor}");
-            assert_eq!(found[0].kind, Kind::Gradle);
+            assert_eq!(found[0].kind, "gradle");
         }
     }
 
@@ -361,7 +346,7 @@ mod tests {
     fn gradle_ignored_without_build_file() {
         let dir = tempdir().unwrap();
         touch(&dir.path().join("proj/.gradle/x"), 50);
-        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
+        assert!(run(dir.path()).is_empty());
     }
 
     #[test]
@@ -369,22 +354,22 @@ mod tests {
         let dir = tempdir().unwrap();
         touch(&dir.path().join("proj/tox.ini"), 10);
         touch(&dir.path().join("proj/.tox/py311/x"), 50);
-        let hit = scan(dir.path(), SizeMode::Disk);
+        let hit = run(dir.path());
         assert_eq!(hit.len(), 1);
-        assert_eq!(hit[0].kind, Kind::Tox);
+        assert_eq!(hit[0].kind, "tox");
 
         let other = tempdir().unwrap();
         touch(&other.path().join("proj/.tox/py311/x"), 50);
-        assert!(scan(other.path(), SizeMode::Disk).is_empty());
+        assert!(run(other.path()).is_empty());
     }
 
     #[test]
     fn ruff_cache_matches_anywhere() {
         let dir = tempdir().unwrap();
         touch(&dir.path().join("a/b/c/.ruff_cache/0.1.0/x"), 30);
-        let found = scan(dir.path(), SizeMode::Disk);
+        let found = run(dir.path());
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::RuffCache);
+        assert_eq!(found[0].kind, "ruff_cache");
     }
 
     #[test]
@@ -395,15 +380,21 @@ mod tests {
         // a __pycache__ buried inside .next must not show up on its own
         touch(&root.join("app/.next/cache/__pycache__/x.pyc"), 40);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::Next);
+        assert_eq!(found[0].kind, "next");
     }
 
     #[test]
-    fn labels_cover_new_types() {
-        let all = Kind::labels_joined();
+    fn labels_cover_all_builtin_types() {
+        let all = labels(&builtin_rules());
         for l in [
+            "node_modules",
+            "target",
+            "__pycache__",
+            "venv",
+            "pytest_cache",
+            "mypy_cache",
             "ruff_cache",
             "next",
             "nuxt",
@@ -413,10 +404,10 @@ mod tests {
             "gradle",
             "tox",
         ] {
-            assert!(all.contains(l), "missing {l}");
+            assert!(all.iter().any(|x| x == l), "missing {l}");
         }
-        assert_eq!(Kind::from_label("tox"), Some(Kind::Tox));
-        assert_eq!(Kind::from_label("svelte-kit"), Some(Kind::SvelteKit));
+        // venv is one label even though .venv and venv are separate rules
+        assert_eq!(all.iter().filter(|x| *x == "venv").count(), 1);
     }
 
     #[test]
@@ -428,9 +419,9 @@ mod tests {
         // a plain dir named venv without the marker
         touch(&root.join("venv/notes.txt"), 50);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::Venv);
+        assert_eq!(found[0].kind, "venv");
         assert_eq!(found[0].rel, PathBuf::from(".venv"));
     }
 
@@ -442,10 +433,9 @@ mod tests {
         touch(&root.join("a/b/.pytest_cache/v/lastfailed"), 30);
         touch(&root.join(".mypy_cache/3.11/x.json"), 30);
 
-        let found = scan(root, SizeMode::Disk);
         assert_eq!(
-            kinds(&found),
-            vec![Kind::Pycache, Kind::MypyCache, Kind::PytestCache]
+            kinds(&run(root)),
+            vec!["__pycache__", "mypy_cache", "pytest_cache"]
         );
     }
 
@@ -454,12 +444,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
         touch(&root.join("p/package.json"), 10);
-        // a __pycache__ nested inside node_modules must not be reported separately
         touch(&root.join("p/node_modules/dep/__pycache__/x.pyc"), 40);
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].kind, Kind::NodeModules);
+        assert_eq!(found[0].kind, "node_modules");
     }
 
     #[test]
@@ -470,32 +459,30 @@ mod tests {
         touch(&root.join("p/node_modules/a.js"), 100);
         touch(&root.join("p/node_modules/sub/b.js"), 200);
 
-        let found = scan(root, SizeMode::Apparent);
+        let found = scan(root, &builtin_rules(), SizeMode::Apparent);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].size, 300);
     }
 
     #[test]
     fn root_itself_is_never_classified() {
-        // scanning a dir that *is* a match (e.g. point straight at a __pycache__)
-        // must not report the root; deletion relies on this.
         let dir = tempdir().unwrap();
         let root = dir.path().join("__pycache__");
         touch(&root.join("m.pyc"), 30);
-        assert!(scan(&root, SizeMode::Disk).is_empty());
+        assert!(run(&root).is_empty());
     }
 
     #[test]
     fn empty_dir_finds_nothing() {
         let dir = tempdir().unwrap();
-        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
+        assert!(run(dir.path()).is_empty());
     }
 
     #[test]
     fn missing_path_yields_empty() {
         let dir = tempdir().unwrap();
         let gone = dir.path().join("does-not-exist");
-        assert!(scan(&gone, SizeMode::Disk).is_empty());
+        assert!(run(&gone).is_empty());
     }
 
     #[cfg(unix)]
@@ -509,7 +496,7 @@ mod tests {
         touch(&f, 1);
 
         let expect = fs::symlink_metadata(&f).unwrap().blocks() * 512;
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         assert_eq!(found.len(), 1);
         assert!(expect > 1, "a 1-byte file should still use a whole block");
         assert_eq!(found[0].size, expect);
@@ -528,10 +515,10 @@ mod tests {
         fs::hard_link(&a, &b).unwrap();
 
         let one_block = fs::symlink_metadata(&a).unwrap().blocks() * 512;
-        let disk = scan(root, SizeMode::Disk);
+        let disk = scan(root, &builtin_rules(), SizeMode::Disk);
         assert_eq!(disk[0].size, one_block); // a and b share the inode
 
-        let apparent = scan(root, SizeMode::Apparent);
+        let apparent = scan(root, &builtin_rules(), SizeMode::Apparent);
         assert_eq!(apparent[0].size, 10000); // both links counted
     }
 
@@ -546,13 +533,76 @@ mod tests {
 
         let old = FileTime::from_unix_time(1_000_000_000, 0); // 2001
         let new = FileTime::from_unix_time(1_700_000_000, 0); // 2023
-                                                              // candidate dir and everything else made old; one nested file made newer
         set_file_mtime(root.join("__pycache__"), old).unwrap();
         set_file_mtime(root.join("__pycache__/sub"), old).unwrap();
         set_file_mtime(&nested, new).unwrap();
 
-        let found = scan(root, SizeMode::Disk);
+        let found = run(root);
         let expect = fs::symlink_metadata(&nested).unwrap().modified().unwrap();
         assert_eq!(found[0].modified, Some(expect));
+    }
+
+    #[test]
+    fn custom_rule_with_anchor_matches_only_with_anchor() {
+        let rules = {
+            let mut r = builtin_rules();
+            r.push(Rule {
+                label: "cocoapods".into(),
+                dir: "Pods".into(),
+                anchor: Anchor::Sibling(vec!["Podfile".into()]),
+            });
+            r
+        };
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("ios/Podfile"), 10);
+        touch(&root.join("ios/Pods/lib/a"), 100);
+        // a Pods dir with no Podfile next to it: ignored
+        touch(&root.join("other/Pods/b"), 100);
+
+        let found = scan(root, &rules, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "cocoapods");
+        assert_eq!(found[0].rel, PathBuf::from("ios/Pods"));
+    }
+
+    #[test]
+    fn custom_anywhere_rule_matches_nested() {
+        let rules = {
+            let mut r = builtin_rules();
+            r.push(Rule {
+                label: "mytool-cache".into(),
+                dir: ".mytool".into(),
+                anchor: Anchor::Anywhere,
+            });
+            r
+        };
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("a/b/c/.mytool/x"), 30);
+
+        let found = scan(dir.path(), &rules, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "mytool-cache");
+    }
+
+    #[test]
+    fn custom_match_does_not_descend() {
+        let rules = {
+            let mut r = builtin_rules();
+            r.push(Rule {
+                label: "mytool-cache".into(),
+                dir: ".mytool".into(),
+                anchor: Anchor::Anywhere,
+            });
+            r
+        };
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        // a builtin cache nested inside a custom match must not show separately
+        touch(&root.join(".mytool/__pycache__/x.pyc"), 40);
+
+        let found = scan(root, &rules, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "mytool-cache");
     }
 }

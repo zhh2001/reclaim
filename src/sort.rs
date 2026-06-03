@@ -36,7 +36,6 @@ fn mtime(f: &Found) -> SystemTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::Kind;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -44,7 +43,7 @@ mod tests {
         Found {
             path: PathBuf::from(path),
             rel: PathBuf::from(path),
-            kind: Kind::Pycache,
+            kind: "pycache".into(),
             size,
             modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs_ago_epoch)),
         }

@@ -7,10 +7,11 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
+use cruft::config::load_rules;
 use cruft::delete::{delete_interactive, delete_targets, Decision, DeleteOpts, TrashRemover};
-use cruft::filter::{parse_duration, parse_size, Filters};
+use cruft::filter::{parse_duration, parse_kinds, parse_size, Filters};
 use cruft::format::{human_age, human_size};
-use cruft::scan::{scan, Found, Kind, SizeMode};
+use cruft::scan::{labels, scan, Found, SizeMode};
 use cruft::sort::{sort_found, SortKey};
 
 #[derive(Parser)]
@@ -40,9 +41,13 @@ struct Cli {
     #[arg(long, value_parser = parse_duration)]
     older_than: Option<Duration>,
 
-    /// Keep only these comma-separated types: node_modules, target, __pycache__, venv, pytest_cache, mypy_cache, ruff_cache, next, nuxt, turbo, svelte-kit, parcel-cache, gradle, tox
-    #[arg(long, value_parser = parse_only)]
-    only: Option<KindList>,
+    /// Keep only these comma-separated builtin types: node_modules, target, __pycache__, venv, pytest_cache, mypy_cache, ruff_cache, next, nuxt, turbo, svelte-kit, parcel-cache, gradle, tox (config rules add more)
+    #[arg(long)]
+    only: Option<String>,
+
+    /// Read custom rules from this config file instead of the default location
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Sort by size (biggest), modified (oldest), or path
     #[arg(long, value_enum, default_value = "size")]
@@ -102,6 +107,26 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    let rules = match load_rules(cli.config.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("cruft: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // --only is validated here, not at parse time, since config rules add labels
+    let kinds = match cli.only {
+        Some(s) => match parse_kinds(&s, &labels(&rules)) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                eprintln!("cruft: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
     let mode = if cli.apparent {
         SizeMode::Apparent
     } else {
@@ -110,10 +135,10 @@ fn main() -> ExitCode {
     let filters = Filters {
         min_size: cli.min_size,
         older_than: cli.older_than,
-        kinds: cli.only.map(|k| k.0),
+        kinds,
     };
 
-    let filtered = filters.apply(scan(&cli.path, mode), SystemTime::now());
+    let filtered = filters.apply(scan(&cli.path, &rules, mode), SystemTime::now());
 
     // total-only reports the full filtered sum and ignores --limit
     if cli.total_only {
@@ -174,13 +199,6 @@ impl From<SortArg> for SortKey {
             SortArg::Path => SortKey::Path,
         }
     }
-}
-
-#[derive(Clone)]
-struct KindList(Vec<Kind>);
-
-fn parse_only(s: &str) -> Result<KindList, String> {
-    cruft::filter::parse_kinds(s).map(KindList)
 }
 
 fn run_delete(found: &[Found], dry_run: bool, yes: bool, interactive: bool) -> ExitCode {
@@ -252,7 +270,7 @@ fn prompt_item(f: &Found) -> Decision {
     print!(
         "{} ({}, {}) trash? [y/N/q] ",
         f.rel.display(),
-        f.kind.label(),
+        f.kind,
         human_size(f.size)
     );
     if io::stdout().flush().is_err() {
@@ -305,7 +323,7 @@ fn print_table(found: &[Found]) {
     for f in found {
         rows.push([
             f.rel.display().to_string(),
-            f.kind.label().to_string(),
+            f.kind.clone(),
             human_size(f.size),
             age_string(f.modified),
         ]);
@@ -374,7 +392,7 @@ fn print_json(found: &[Found]) {
         .iter()
         .map(|f| JsonEntry {
             path: f.rel.display().to_string(),
-            kind: f.kind.label(),
+            kind: &f.kind,
             size_bytes: f.size,
             modified_unix: f
                 .modified

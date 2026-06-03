@@ -79,6 +79,29 @@ project file sits next to it:
 without risking a real source directory. Once a directory matches, its contents
 aren't scanned again, so nested matches are counted once.
 
+## Custom rules
+
+Add your own types in `$XDG_CONFIG_HOME/cruft/config.toml` (or
+`~/.config/cruft/config.toml`), or point at a file with `--config`. Each rule
+needs a `name` (shown in the TYPE column, usable with `--only`) and a `dir`
+(exact directory name), plus either `anchors` (sibling files, any one is enough)
+or `anywhere = true` for an unambiguous cache name:
+
+```toml
+[[rules]]
+name = "cocoapods"
+dir = "Pods"
+anchors = ["Podfile"]
+
+[[rules]]
+name = "mytool-cache"
+dir = ".mytool"
+anywhere = true
+```
+
+Custom rules add to the builtin ones; a rule's name or dir can't collide with a
+builtin. With no config file, behaviour is unchanged.
+
 ## Safety
 
 Deletion moves directories to the trash (the XDG trash on Linux), so a mistake

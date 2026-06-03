@@ -1,12 +1,12 @@
 use std::time::{Duration, SystemTime};
 
-use crate::scan::{Found, Kind};
+use crate::scan::Found;
 
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
     pub min_size: Option<u64>,
     pub older_than: Option<Duration>,
-    pub kinds: Option<Vec<Kind>>,
+    pub kinds: Option<Vec<String>>,
 }
 
 impl Filters {
@@ -89,29 +89,22 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
         .ok_or_else(|| format!("duration '{s}' is too large"))
 }
 
-pub fn parse_kinds(s: &str) -> Result<Vec<Kind>, String> {
-    let mut out = Vec::new();
+pub fn parse_kinds(s: &str, valid: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
     for part in s.split(',') {
         let p = part.trim();
         if p.is_empty() {
             continue;
         }
-        match Kind::from_label(p) {
-            Some(k) => {
-                if !out.contains(&k) {
-                    out.push(k);
-                }
-            }
-            None => {
-                return Err(format!(
-                    "unknown type '{p}' (valid: {})",
-                    Kind::labels_joined()
-                ))
-            }
+        if !valid.iter().any(|v| v == p) {
+            return Err(format!("unknown type '{p}' (valid: {})", valid.join(", ")));
+        }
+        if !out.iter().any(|o| o == p) {
+            out.push(p.to_string());
         }
     }
     if out.is_empty() {
-        return Err(format!("no types given (valid: {})", Kind::labels_joined()));
+        return Err(format!("no types given (valid: {})", valid.join(", ")));
     }
     Ok(out)
 }
@@ -121,11 +114,11 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn found(kind: Kind, size: u64, modified: Option<SystemTime>) -> Found {
+    fn found(kind: &str, size: u64, modified: Option<SystemTime>) -> Found {
         Found {
             path: PathBuf::from("x"),
             rel: PathBuf::from("x"),
-            kind,
+            kind: kind.into(),
             size,
             modified,
         }
@@ -164,19 +157,22 @@ mod tests {
 
     #[test]
     fn parses_kinds() {
-        assert_eq!(parse_kinds("target").unwrap(), vec![Kind::Target]);
+        let valid = crate::scan::labels(&crate::scan::builtin_rules());
+        assert_eq!(parse_kinds("target", &valid).unwrap(), vec!["target"]);
         assert_eq!(
-            parse_kinds("node_modules,target").unwrap(),
-            vec![Kind::NodeModules, Kind::Target]
+            parse_kinds("node_modules,target", &valid).unwrap(),
+            vec!["node_modules", "target"]
         );
         // __pycache__ is the on-screen label, so it must be accepted verbatim
-        assert_eq!(parse_kinds("__pycache__").unwrap(), vec![Kind::Pycache]);
-        // newer types are selectable too
         assert_eq!(
-            parse_kinds("ruff_cache,tox").unwrap(),
-            vec![Kind::RuffCache, Kind::Tox]
+            parse_kinds("__pycache__", &valid).unwrap(),
+            vec!["__pycache__"]
         );
-        let err = parse_kinds("bogus").unwrap_err();
+        assert_eq!(
+            parse_kinds("ruff_cache,tox", &valid).unwrap(),
+            vec!["ruff_cache", "tox"]
+        );
+        let err = parse_kinds("bogus", &valid).unwrap_err();
         assert!(err.contains("bogus") && err.contains("node_modules"));
     }
 
@@ -187,9 +183,9 @@ mod tests {
             min_size: Some(1000),
             ..Default::default()
         };
-        assert!(f.keep(&found(Kind::Target, 1000, None), now)); // == threshold
-        assert!(f.keep(&found(Kind::Target, 1001, None), now));
-        assert!(!f.keep(&found(Kind::Target, 999, None), now));
+        assert!(f.keep(&found("target", 1000, None), now)); // == threshold
+        assert!(f.keep(&found("target", 1001, None), now));
+        assert!(!f.keep(&found("target", 999, None), now));
     }
 
     #[test]
@@ -201,27 +197,27 @@ mod tests {
         };
         let cutoff = now - Duration::from_secs(100);
 
-        let older = found(Kind::Target, 1, Some(cutoff - Duration::from_secs(1)));
-        let at_boundary = found(Kind::Target, 1, Some(cutoff));
-        let newer = found(Kind::Target, 1, Some(cutoff + Duration::from_secs(1)));
+        let older = found("target", 1, Some(cutoff - Duration::from_secs(1)));
+        let at_boundary = found("target", 1, Some(cutoff));
+        let newer = found("target", 1, Some(cutoff + Duration::from_secs(1)));
 
         assert!(f.keep(&older, now));
         assert!(f.keep(&at_boundary, now)); // inclusive
         assert!(!f.keep(&newer, now));
         // undated entries are dropped under --older-than
-        assert!(!f.keep(&found(Kind::Target, 1, None), now));
+        assert!(!f.keep(&found("target", 1, None), now));
     }
 
     #[test]
     fn only_keeps_listed_kinds() {
         let now = SystemTime::UNIX_EPOCH;
         let f = Filters {
-            kinds: Some(vec![Kind::Target, Kind::Venv]),
+            kinds: Some(vec!["target".into(), "venv".into()]),
             ..Default::default()
         };
-        assert!(f.keep(&found(Kind::Target, 1, None), now));
-        assert!(f.keep(&found(Kind::Venv, 1, None), now));
-        assert!(!f.keep(&found(Kind::NodeModules, 1, None), now));
+        assert!(f.keep(&found("target", 1, None), now));
+        assert!(f.keep(&found("venv", 1, None), now));
+        assert!(!f.keep(&found("node_modules", 1, None), now));
     }
 
     #[test]
@@ -232,16 +228,16 @@ mod tests {
         let f = Filters {
             min_size: Some(500),
             older_than: Some(Duration::from_secs(100)),
-            kinds: Some(vec![Kind::Target]),
+            kinds: Some(vec!["target".into()]),
         };
 
         // satisfies all three
-        assert!(f.keep(&found(Kind::Target, 500, old), now));
+        assert!(f.keep(&found("target", 500, old), now));
         // wrong kind
-        assert!(!f.keep(&found(Kind::Venv, 500, old), now));
+        assert!(!f.keep(&found("venv", 500, old), now));
         // too small
-        assert!(!f.keep(&found(Kind::Target, 499, old), now));
+        assert!(!f.keep(&found("target", 499, old), now));
         // too new
-        assert!(!f.keep(&found(Kind::Target, 500, recent), now));
+        assert!(!f.keep(&found("target", 500, recent), now));
     }
 }

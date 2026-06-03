@@ -72,8 +72,8 @@ fn help_lists_every_type() {
     let out = cruft().arg("--help").output().unwrap();
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
-    for k in cruft::scan::Kind::ALL {
-        assert!(help.contains(k.label()), "help is missing {}", k.label());
+    for label in cruft::scan::labels(&cruft::scan::builtin_rules()) {
+        assert!(help.contains(&label), "help is missing {label}");
     }
 }
 
@@ -223,6 +223,110 @@ fn total_only_with_delete_errors() {
 
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be combined with --delete"));
+}
+
+fn write_config(text: &str) -> (TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(&path, text).unwrap();
+    (dir, path)
+}
+
+#[test]
+fn config_custom_rule_is_applied() {
+    let (_cfg_dir, cfg) = write_config(
+        r#"
+        [[rules]]
+        name = "cocoapods"
+        dir = "Pods"
+        anchors = ["Podfile"]
+    "#,
+    );
+    let fix = tempfile::tempdir().unwrap();
+    fs::create_dir_all(fix.path().join("ios/Pods/lib")).unwrap();
+    fs::write(fix.path().join("ios/Podfile"), "x").unwrap();
+    fs::write(fix.path().join("ios/Pods/lib/a"), vec![b'x'; 5000]).unwrap();
+    // a Pods without Podfile must stay ignored
+    fs::create_dir_all(fix.path().join("nope/Pods")).unwrap();
+    fs::write(fix.path().join("nope/Pods/b"), vec![b'x'; 5000]).unwrap();
+
+    let out = cruft()
+        .arg("--config")
+        .arg(&cfg)
+        .arg(fix.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("cocoapods"));
+    assert!(stdout.contains("ios/Pods"));
+    assert!(!stdout.contains("nope/Pods"));
+}
+
+#[test]
+fn config_custom_type_is_selectable_with_only() {
+    let (_cfg_dir, cfg) = write_config(
+        r#"
+        [[rules]]
+        name = "cocoapods"
+        dir = "Pods"
+        anchors = ["Podfile"]
+    "#,
+    );
+    let fix = tempfile::tempdir().unwrap();
+    fs::create_dir_all(fix.path().join("ios/Pods")).unwrap();
+    fs::write(fix.path().join("ios/Podfile"), "x").unwrap();
+    fs::write(fix.path().join("ios/Pods/a"), vec![b'x'; 5000]).unwrap();
+    fs::create_dir_all(fix.path().join("py/__pycache__")).unwrap();
+    fs::write(fix.path().join("py/__pycache__/a"), vec![b'x'; 5000]).unwrap();
+
+    let out = cruft()
+        .arg("--config")
+        .arg(&cfg)
+        .arg("--only")
+        .arg("cocoapods")
+        .arg(fix.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("cocoapods"));
+    assert!(!stdout.contains("__pycache__"));
+}
+
+#[test]
+fn missing_config_path_errors() {
+    let fix = fixture();
+    let out = cruft()
+        .arg("--config")
+        .arg("/no/such/config.toml")
+        .arg(fix.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("config not found"));
+}
+
+#[test]
+fn invalid_config_rule_errors() {
+    let (_cfg_dir, cfg) = write_config(
+        r#"
+        [[rules]]
+        name = "bad"
+        dir = "Bad"
+    "#,
+    );
+    let fix = fixture();
+    let out = cruft()
+        .arg("--config")
+        .arg(&cfg)
+        .arg(fix.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("anchors or anywhere"));
 }
 
 #[test]

@@ -1,3 +1,4 @@
+pub mod config;
 pub mod delete;
 pub mod filter;
 pub mod format;

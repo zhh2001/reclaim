@@ -113,7 +113,6 @@ fn trash_one<R: Remover>(remover: &R, t: &Found, out: &mut DeleteOutcome) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::Kind;
     use std::cell::RefCell;
     use std::time::SystemTime;
 
@@ -170,7 +169,7 @@ mod tests {
         Found {
             path: PathBuf::from(path),
             rel: PathBuf::from(path),
-            kind: Kind::Pycache,
+            kind: "pycache".into(),
             size,
             modified: Some(SystemTime::UNIX_EPOCH),
         }
@@ -256,21 +255,21 @@ mod tests {
             Found {
                 path: PathBuf::from("big1"),
                 rel: PathBuf::from("big1"),
-                kind: Kind::Target,
+                kind: "target".into(),
                 size: 5000,
                 modified: None,
             },
             Found {
                 path: PathBuf::from("small"),
                 rel: PathBuf::from("small"),
-                kind: Kind::Pycache,
+                kind: "pycache".into(),
                 size: 10,
                 modified: None,
             },
             Found {
                 path: PathBuf::from("big2"),
                 rel: PathBuf::from("big2"),
-                kind: Kind::NodeModules,
+                kind: "node_modules".into(),
                 size: 2000,
                 modified: None,
             },
@@ -300,21 +299,21 @@ mod tests {
             Found {
                 path: PathBuf::from("mid"),
                 rel: PathBuf::from("mid"),
-                kind: Kind::Target,
+                kind: "target".into(),
                 size: 200,
                 modified: None,
             },
             Found {
                 path: PathBuf::from("big"),
                 rel: PathBuf::from("big"),
-                kind: Kind::Target,
+                kind: "target".into(),
                 size: 500,
                 modified: None,
             },
             Found {
                 path: PathBuf::from("small"),
                 rel: PathBuf::from("small"),
-                kind: Kind::Target,
+                kind: "target".into(),
                 size: 10,
                 modified: None,
             },

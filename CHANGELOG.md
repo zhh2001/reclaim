@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Optional config file (`$XDG_CONFIG_HOME/cruft/config.toml` or `--config`) for
+  custom anchored rules: match a directory name when a sibling file exists, or
+  anywhere for a tool-specific cache name.
+
 ## 0.1.0
 
 First release.
