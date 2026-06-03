@@ -71,6 +71,14 @@ cruft --completions zsh  > ~/.zfunc/_cruft
 cruft --completions fish > ~/.config/fish/completions/cruft.fish
 ```
 
+## Man page
+
+`--man` prints a man page in roff to stdout:
+
+```sh
+cruft --man > ~/.local/share/man/man1/cruft.1
+```
+
 ## What it matches
 
 Directories whose name is a tool-specific cache match anywhere:

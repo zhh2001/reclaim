@@ -4,6 +4,7 @@
 
 - `--completions <shell>` prints a shell completion script (bash, zsh, fish,
   powershell, elvish).
+- `--man` prints a man page.
 
 ## [0.2.0] - 2026-06-03
 

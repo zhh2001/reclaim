@@ -30,6 +30,10 @@ struct Cli {
     #[arg(long, value_enum)]
     completions: Option<Shell>,
 
+    /// Print a man page (roff) and exit
+    #[arg(long)]
+    man: bool,
+
     /// Print results as JSON
     #[arg(long)]
     json: bool,
@@ -90,7 +94,17 @@ struct Cli {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // short-circuit everything else: just emit the script
+    // short-circuit everything else; --man wins if both are given
+    if cli.man {
+        let cmd = Cli::command();
+        if clap_mangen::Man::new(cmd)
+            .render(&mut io::stdout())
+            .is_err()
+        {
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
     if let Some(shell) = cli.completions {
         let mut cmd = Cli::command();
         clap_complete::generate(shell, &mut cmd, "cruft", &mut io::stdout());

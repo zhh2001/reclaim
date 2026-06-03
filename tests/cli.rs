@@ -266,6 +266,57 @@ fn completions_win_over_delete() {
     assert!(dir.path().join("proj/__pycache__").exists());
 }
 
+#[test]
+fn man_page_is_generated() {
+    let out = cruft().arg("--man").output().unwrap();
+    assert!(out.status.success());
+    let page = String::from_utf8_lossy(&out.stdout);
+    assert!(page.contains(".TH"), "missing roff header");
+    assert!(page.contains("cruft"));
+    // hyphens are roff-escaped, so match the option name without the dashes
+    assert!(page.contains("delete"), "missing the delete option");
+}
+
+#[test]
+fn man_short_circuits_without_a_valid_path() {
+    let out = cruft()
+        .arg("--man")
+        .arg("/definitely/not/a/real/dir")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!out.stdout.is_empty());
+}
+
+#[test]
+fn man_wins_over_delete() {
+    let dir = fixture();
+    let out = cruft()
+        .arg("--man")
+        .arg("--delete")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains(".TH"));
+    assert!(dir.path().join("proj/__pycache__").exists());
+}
+
+#[test]
+fn man_wins_over_completions() {
+    let out = cruft()
+        .arg("--man")
+        .arg("--completions")
+        .arg("bash")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // roff, not a bash completion script
+    assert!(stdout.contains(".TH"));
+    assert!(!stdout.contains("complete -F"));
+}
+
 fn write_config(text: &str) -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
