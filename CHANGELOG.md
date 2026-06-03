@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- `--completions <shell>` prints a shell completion script (bash, zsh, fish,
+  powershell, elvish).
+
 ## [0.2.0] - 2026-06-03
 
 - Optional config file (`$XDG_CONFIG_HOME/cruft/config.toml` or `--config`) for

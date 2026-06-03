@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
+use clap_complete::Shell;
 use serde::Serialize;
 
 use cruft::config::load_rules;
@@ -24,6 +25,10 @@ struct Cli {
     /// Directory to scan
     #[arg(default_value = ".")]
     path: PathBuf,
+
+    /// Print a shell completion script and exit
+    #[arg(long, value_enum)]
+    completions: Option<Shell>,
 
     /// Print results as JSON
     #[arg(long)]
@@ -84,6 +89,13 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    // short-circuit everything else: just emit the script
+    if let Some(shell) = cli.completions {
+        let mut cmd = Cli::command();
+        clap_complete::generate(shell, &mut cmd, "cruft", &mut io::stdout());
+        return ExitCode::SUCCESS;
+    }
 
     if cli.delete && cli.json {
         eprintln!("cruft: --json is not supported with --delete");

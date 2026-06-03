@@ -225,6 +225,47 @@ fn total_only_with_delete_errors() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be combined with --delete"));
 }
 
+#[test]
+fn completions_generate_for_each_shell() {
+    for shell in ["bash", "zsh", "fish"] {
+        let out = cruft().arg("--completions").arg(shell).output().unwrap();
+        assert!(out.status.success(), "{shell} exited non-zero");
+        let script = String::from_utf8_lossy(&out.stdout);
+        assert!(!script.is_empty(), "{shell} produced no output");
+        assert!(script.contains("cruft"), "{shell} missing binary name");
+        assert!(script.contains("--delete"), "{shell} missing a known flag");
+    }
+}
+
+#[test]
+fn completions_short_circuit_without_a_valid_path() {
+    // a bogus path would normally error; with --completions it's ignored
+    let out = cruft()
+        .arg("--completions")
+        .arg("bash")
+        .arg("/definitely/not/a/real/dir")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!out.stdout.is_empty());
+}
+
+#[test]
+fn completions_win_over_delete() {
+    let dir = fixture();
+    let out = cruft()
+        .arg("--completions")
+        .arg("bash")
+        .arg("--delete")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("cruft"));
+    // nothing was deleted
+    assert!(dir.path().join("proj/__pycache__").exists());
+}
+
 fn write_config(text: &str) -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");

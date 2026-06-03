@@ -60,6 +60,17 @@ cruft --delete -i                   # ask per directory (y/n/q)
 command would have listed. Each directory is re-checked right before it's moved;
 if it changed since the scan it's reported and skipped.
 
+## Shell completions
+
+`--completions <shell>` prints a completion script to stdout (bash, zsh, fish,
+powershell, elvish). Redirect it to wherever your shell looks:
+
+```sh
+cruft --completions bash > ~/.local/share/bash-completion/completions/cruft
+cruft --completions zsh  > ~/.zfunc/_cruft
+cruft --completions fish > ~/.config/fish/completions/cruft.fish
+```
+
 ## What it matches
 
 Directories whose name is a tool-specific cache match anywhere:

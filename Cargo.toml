@@ -12,6 +12,7 @@ homepage = "https://github.com/zhh2001/cruft"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 walkdir = "2"
 jwalk = "0.8"
 serde = { version = "1", features = ["derive"] }
