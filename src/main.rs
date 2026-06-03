@@ -38,7 +38,7 @@ struct Cli {
     #[arg(long, value_parser = parse_duration)]
     older_than: Option<Duration>,
 
-    /// Keep only these comma-separated types: node_modules, target, __pycache__, venv, pytest_cache, mypy_cache
+    /// Keep only these comma-separated types: node_modules, target, __pycache__, venv, pytest_cache, mypy_cache, ruff_cache, next, nuxt, turbo, svelte-kit, parcel-cache, gradle, tox
     #[arg(long, value_parser = parse_only)]
     only: Option<KindList>,
 

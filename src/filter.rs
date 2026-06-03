@@ -171,6 +171,11 @@ mod tests {
         );
         // __pycache__ is the on-screen label, so it must be accepted verbatim
         assert_eq!(parse_kinds("__pycache__").unwrap(), vec![Kind::Pycache]);
+        // newer types are selectable too
+        assert_eq!(
+            parse_kinds("ruff_cache,tox").unwrap(),
+            vec![Kind::RuffCache, Kind::Tox]
+        );
         let err = parse_kinds("bogus").unwrap_err();
         assert!(err.contains("bogus") && err.contains("node_modules"));
     }

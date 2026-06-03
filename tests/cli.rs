@@ -68,6 +68,16 @@ fn invalid_min_size_is_an_error() {
 }
 
 #[test]
+fn help_lists_every_type() {
+    let out = reclaim().arg("--help").output().unwrap();
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    for k in reclaim::scan::Kind::ALL {
+        assert!(help.contains(k.label()), "help is missing {}", k.label());
+    }
+}
+
+#[test]
 fn unknown_only_type_lists_valid_values() {
     let dir = fixture();
     let out = reclaim()

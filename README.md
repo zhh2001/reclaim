@@ -6,7 +6,7 @@ and tells you how much space they're using. By default it only reports;
 
 ## Usage
 
-```
+```sh
 reclaim [PATH]
 ```
 
@@ -14,7 +14,7 @@ reclaim [PATH]
 directories that are usually gitignored (`node_modules`, `target`), since those
 are the whole point.
 
-```
+```txt
 $ reclaim ~/code
 PATH                       TYPE               SIZE  MODIFIED
 web/node_modules           node_modules    1.2 GiB  3 months ago
@@ -44,7 +44,7 @@ matches, reclaim says so and exits without deleting.
 
 ## Deleting
 
-```
+```sh
 reclaim --delete [PATH]
 ```
 
@@ -62,11 +62,22 @@ with `--json`.
 
 ## What it detects
 
-- `node_modules`, when there's a `package.json` next to it
-- `target`, when there's a `Cargo.toml` next to it
-- `__pycache__`, anywhere
-- `.venv` / `venv`, when they contain a `pyvenv.cfg`
-- `.pytest_cache`, `.mypy_cache`, anywhere
+Cache directories with an unambiguous, tool-specific name match anywhere:
+
+- `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`
+
+Everything else has an ambiguous name, so it only matches when the right
+manifest sits in the same parent directory:
+
+- `node_modules` — `package.json`
+- `target` — `Cargo.toml` (Rust) or `pom.xml` (Maven)
+- `.next`, `.nuxt`, `.turbo`, `.svelte-kit`, `.parcel-cache` — `package.json`
+- `.gradle` — `build.gradle`, `build.gradle.kts`, `settings.gradle`, or `settings.gradle.kts`
+- `.tox` — `tox.ini`
+- `.venv` / `venv` — a `pyvenv.cfg` inside
+
+`dist` and `build` are deliberately left out; the names are too ambiguous to
+match safely.
 
 Once a directory matches it isn't scanned further, so a match nested inside
 another match is counted once, as part of the outer one.
@@ -78,6 +89,6 @@ mtime found anywhere in the directory, not the directory's own timestamp.
 
 ## Build
 
-```
+```sh
 cargo build --release
 ```

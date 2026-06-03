@@ -14,16 +14,32 @@ pub enum Kind {
     Venv,
     PytestCache,
     MypyCache,
+    RuffCache,
+    Next,
+    Nuxt,
+    Turbo,
+    SvelteKit,
+    ParcelCache,
+    Gradle,
+    Tox,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 14] = [
         Kind::NodeModules,
         Kind::Target,
         Kind::Pycache,
         Kind::Venv,
         Kind::PytestCache,
         Kind::MypyCache,
+        Kind::RuffCache,
+        Kind::Next,
+        Kind::Nuxt,
+        Kind::Turbo,
+        Kind::SvelteKit,
+        Kind::ParcelCache,
+        Kind::Gradle,
+        Kind::Tox,
     ];
 
     pub fn label(self) -> &'static str {
@@ -34,6 +50,14 @@ impl Kind {
             Kind::Venv => "venv",
             Kind::PytestCache => "pytest_cache",
             Kind::MypyCache => "mypy_cache",
+            Kind::RuffCache => "ruff_cache",
+            Kind::Next => "next",
+            Kind::Nuxt => "nuxt",
+            Kind::Turbo => "turbo",
+            Kind::SvelteKit => "svelte-kit",
+            Kind::ParcelCache => "parcel-cache",
+            Kind::Gradle => "gradle",
+            Kind::Tox => "tox",
         }
     }
 
@@ -103,19 +127,38 @@ pub fn scan(root: &Path, mode: SizeMode) -> Vec<Found> {
 fn classify(path: &Path) -> Option<Kind> {
     let name = path.file_name()?.to_str()?;
     match name {
-        "node_modules" => parent_has(path, "package.json").then_some(Kind::NodeModules),
-        "target" => parent_has(path, "Cargo.toml").then_some(Kind::Target),
+        // anchored: only a match when the right manifest sits next to the dir
+        "node_modules" => parent_has(path, &["package.json"]).then_some(Kind::NodeModules),
+        "target" => parent_has(path, &["Cargo.toml", "pom.xml"]).then_some(Kind::Target),
+        ".next" => parent_has(path, &["package.json"]).then_some(Kind::Next),
+        ".nuxt" => parent_has(path, &["package.json"]).then_some(Kind::Nuxt),
+        ".turbo" => parent_has(path, &["package.json"]).then_some(Kind::Turbo),
+        ".svelte-kit" => parent_has(path, &["package.json"]).then_some(Kind::SvelteKit),
+        ".parcel-cache" => parent_has(path, &["package.json"]).then_some(Kind::ParcelCache),
+        ".gradle" => parent_has(
+            path,
+            &[
+                "build.gradle",
+                "build.gradle.kts",
+                "settings.gradle",
+                "settings.gradle.kts",
+            ],
+        )
+        .then_some(Kind::Gradle),
+        ".tox" => parent_has(path, &["tox.ini"]).then_some(Kind::Tox),
+        ".venv" | "venv" => path.join("pyvenv.cfg").is_file().then_some(Kind::Venv),
+        // tool-specific cache names, unambiguous wherever they appear
         "__pycache__" => Some(Kind::Pycache),
         ".pytest_cache" => Some(Kind::PytestCache),
         ".mypy_cache" => Some(Kind::MypyCache),
-        ".venv" | "venv" => path.join("pyvenv.cfg").is_file().then_some(Kind::Venv),
+        ".ruff_cache" => Some(Kind::RuffCache),
         _ => None,
     }
 }
 
-fn parent_has(path: &Path, sibling: &str) -> bool {
+fn parent_has(path: &Path, anchors: &[&str]) -> bool {
     path.parent()
-        .map(|p| p.join(sibling).is_file())
+        .map(|p| anchors.iter().any(|a| p.join(a).is_file()))
         .unwrap_or(false)
 }
 
@@ -242,6 +285,138 @@ mod tests {
         let found = scan(root, SizeMode::Disk);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, Kind::Target);
+    }
+
+    #[test]
+    fn target_matches_maven_via_pom_xml() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("svc/pom.xml"), 10);
+        touch(&root.join("svc/target/classes/A.class"), 100);
+
+        let found = scan(root, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Kind::Target);
+    }
+
+    #[test]
+    fn target_ignored_without_cargo_or_pom() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("plain/target/stuff"), 100);
+        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
+    }
+
+    #[test]
+    fn js_framework_caches_need_package_json() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("app/package.json"), 10);
+        for d in [".next", ".nuxt", ".turbo", ".svelte-kit", ".parcel-cache"] {
+            touch(&root.join(format!("app/{d}/f")), 20);
+        }
+
+        let found = scan(root, SizeMode::Disk);
+        assert_eq!(
+            kinds(&found),
+            vec![
+                Kind::Next,
+                Kind::Nuxt,
+                Kind::ParcelCache,
+                Kind::SvelteKit,
+                Kind::Turbo,
+            ]
+        );
+    }
+
+    #[test]
+    fn js_framework_caches_ignored_without_package_json() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        for d in [".next", ".nuxt", ".turbo", ".svelte-kit", ".parcel-cache"] {
+            touch(&root.join(format!("nope/{d}/f")), 20);
+        }
+        assert!(scan(root, SizeMode::Disk).is_empty());
+    }
+
+    #[test]
+    fn gradle_matches_any_build_file() {
+        for anchor in [
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+        ] {
+            let dir = tempdir().unwrap();
+            let root = dir.path();
+            touch(&root.join(format!("proj/{anchor}")), 10);
+            touch(&root.join("proj/.gradle/x"), 50);
+
+            let found = scan(root, SizeMode::Disk);
+            assert_eq!(found.len(), 1, "anchor {anchor}");
+            assert_eq!(found[0].kind, Kind::Gradle);
+        }
+    }
+
+    #[test]
+    fn gradle_ignored_without_build_file() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("proj/.gradle/x"), 50);
+        assert!(scan(dir.path(), SizeMode::Disk).is_empty());
+    }
+
+    #[test]
+    fn tox_needs_tox_ini() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("proj/tox.ini"), 10);
+        touch(&dir.path().join("proj/.tox/py311/x"), 50);
+        let hit = scan(dir.path(), SizeMode::Disk);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].kind, Kind::Tox);
+
+        let other = tempdir().unwrap();
+        touch(&other.path().join("proj/.tox/py311/x"), 50);
+        assert!(scan(other.path(), SizeMode::Disk).is_empty());
+    }
+
+    #[test]
+    fn ruff_cache_matches_anywhere() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("a/b/c/.ruff_cache/0.1.0/x"), 30);
+        let found = scan(dir.path(), SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Kind::RuffCache);
+    }
+
+    #[test]
+    fn new_type_does_not_descend() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        touch(&root.join("app/package.json"), 10);
+        // a __pycache__ buried inside .next must not show up on its own
+        touch(&root.join("app/.next/cache/__pycache__/x.pyc"), 40);
+
+        let found = scan(root, SizeMode::Disk);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Kind::Next);
+    }
+
+    #[test]
+    fn labels_cover_new_types() {
+        let all = Kind::labels_joined();
+        for l in [
+            "ruff_cache",
+            "next",
+            "nuxt",
+            "turbo",
+            "svelte-kit",
+            "parcel-cache",
+            "gradle",
+            "tox",
+        ] {
+            assert!(all.contains(l), "missing {l}");
+        }
+        assert_eq!(Kind::from_label("tox"), Some(Kind::Tox));
+        assert_eq!(Kind::from_label("svelte-kit"), Some(Kind::SvelteKit));
     }
 
     #[test]
